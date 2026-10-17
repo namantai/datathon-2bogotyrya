@@ -1,3 +1,4 @@
+
 # Python
 __pycache__/
 *.pyc
@@ -10,12 +11,12 @@ dist/
 build/
 .next/
 
-# Environment secrets
+# Secrets
 .env
 .env.*
 !.env.example
 
-# Editor
+# IDE
 .vscode/
 .idea/
 
@@ -29,3 +30,30 @@ Thumbs.db
 # ML tracking
 wandb/
 mlruns/
+logs/
+runs/
+
+# Private datasets
+private_data/
+data/
+datasets/
+extracted_frames/
+features/
+outputs/
+
+# Video files
+*.mov
+*.mp4
+*.avi
+
+# Model weights
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+
+# Generated arrays
+*.npy
+*.npz
