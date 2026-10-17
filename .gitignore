@@ -1,19 +1,62 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
 
 # Frontend
 node_modules/
 dist/
 build/
 .next/
+*.tsbuildinfo
 
 # Environment secrets
 .env
 .env.*
 !.env.example
+
+# Local data and generated media
+data/
+datasets/
+videos/
+uploads/
+frames/
+extracted_frames/
+storage/
+artifacts/
+inference_results/
+tmp/
+temp/
+*.mov
+*.mp4
+*.avi
+*.mkv
+*.webm
+*.tmp
+*.temp
+*.swp
+
+# Model weights and local databases
+weights/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+.coverage
+htmlcov/
 
 # Editor
 .vscode/

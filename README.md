@@ -1,23 +1,67 @@
+# DATATHON — ForteBank
+
+Локальный сервис анализа видеозаписей кассовых операций для выявления визуальных признаков возможных нарушений. Проект разрабатывается для ForteBank DATATHON 2026.
+
+## Team
+
+Two developers: ML and Fullstack.
+
+## Branches
+
+- `main` — stable integration branch
+- `feature/ml` — machine learning
+- `feature/fullstack` — backend and frontend
+
+## Project status
+
+Initial setup. На этапе 01 реализован только технический фундамент: диагностический Backend и стартовый Frontend. Анализ видео, API жюри и ML inference пока отсутствуют.
+
+## Стек
+
+- Backend: Python 3.11+, FastAPI, Pydantic, pytest.
+- Frontend: React, TypeScript, Vite.
+- ML: будущий локальный Python inference-модуль; контракт находится в статусе DRAFT.
+
+## Структура
+
+```text
+backend/   FastAPI-приложение и Backend-тесты
+frontend/  React-приложение
+ml/        область ответственности ML Engineer
+configs/   совместные конфигурации правил и категорий
+docs/      архитектура, требования и контракты
+scripts/   будущие воспроизводимые служебные сценарии
 ```
-`\# DATATHON — ForteBank`
 
+## Локальный запуск Backend
 
-`\#\# Team`
-
-`Two developers: ML and Fullstack.`
-
-
-`\#\# Branches`
-
-`- \`main\` — stable integration branch`
-
-`- \`feature/ml\` — machine learning`
-
-`- \`feature/fullstack\` — backend and frontend`
-
-
-`\#\# Project status`
-
-`Initial setup.`
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+uvicorn fortebank_api.main:app --app-dir src --reload
 ```
 
+Проверка: `GET http://127.0.0.1:8000/health`.
+Настройки по умолчанию безопасны; при необходимости файл окружения можно создать командой `cp ../.env.example .env` перед запуском из `backend/`.
+
+## Локальный запуск Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Production-сборка проверяется командой `npm run build`.
+
+## Документация
+
+- [Архитектура](docs/architecture.md)
+- [Требования](docs/requirements.md)
+- [Контракт API жюри](docs/api-contract.md)
+- [DRAFT-контракт Backend ↔ ML](docs/ml-contract.md)
+- [Рабочий процесс Codex](docs/codex-workflow.md)
+
+Общие обязательные правила разработки и безопасности находятся в [AGENTS.md](AGENTS.md).

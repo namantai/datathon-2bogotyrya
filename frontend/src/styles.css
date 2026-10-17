@@ -1,0 +1,128 @@
+:root {
+  color: #17231d;
+  background: #f4f7f5;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.page-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(circle at top left, rgb(41 143 86 / 14%), transparent 38%),
+    #f4f7f5;
+}
+
+.hero {
+  width: min(760px, 100%);
+  padding: clamp(32px, 7vw, 72px);
+  border: 1px solid #dce6df;
+  border-radius: 28px;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 24px 70px rgb(23 35 29 / 10%);
+}
+
+.eyebrow {
+  margin: 0 0 16px;
+  color: #167342;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  max-width: 14ch;
+  font-size: clamp(2.25rem, 7vw, 4.6rem);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.lead {
+  max-width: 62ch;
+  margin: 28px 0 0;
+  color: #536159;
+  font-size: 1.08rem;
+  line-height: 1.7;
+}
+
+.status-card {
+  display: flex;
+  gap: 14px;
+  margin-top: 36px;
+  padding: 20px;
+  border: 1px solid #d7e8dd;
+  border-radius: 16px;
+  background: #f3faf6;
+}
+
+.status-card p {
+  margin: 6px 0 0;
+  color: #536159;
+  line-height: 1.55;
+}
+
+.status-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #21a15e;
+  box-shadow: 0 0 0 5px rgb(33 161 94 / 13%);
+}
+
+.foundation-list {
+  display: grid;
+  gap: 10px;
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.foundation-list li {
+  padding-left: 24px;
+  color: #33453b;
+  position: relative;
+}
+
+.foundation-list li::before {
+  position: absolute;
+  left: 0;
+  color: #167342;
+  content: "✓";
+  font-weight: 800;
+}
+
+@media (max-width: 520px) {
+  .hero {
+    border-radius: 20px;
+  }
+
+  h1 {
+    max-width: none;
+  }
+}
