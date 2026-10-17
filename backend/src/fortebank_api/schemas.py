@@ -32,7 +32,7 @@ NonNegativeFiniteFloat = Annotated[
 class PublicModel(BaseModel):
     """Forbid accidental additions to the jury-facing schema."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", revalidate_instances="always")
 
 
 class HealthResponse(PublicModel):

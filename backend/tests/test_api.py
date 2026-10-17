@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from fortebank_api.analyzers import AnalysisEvent, AnalysisResult, FakeAnalyzer
 from fortebank_api.config import Settings
 from fortebank_api.jobs import JobRepository
@@ -46,6 +48,44 @@ class SyntheticEvidenceExtractor:
         ]
 
 
+class InvalidEvidenceExtractor:
+    """Inject malformed evidence to verify fail-closed result validation."""
+
+    def __init__(self, image_base64: str) -> None:
+        self.image_base64 = image_base64
+
+    async def extract(
+        self,
+        video_path: Path,
+        timestamps_sec: tuple[float, ...],
+    ) -> list[Any]:
+        assert video_path.is_file()
+        return [
+            {
+                "timestamp_sec": timestamps_sec[0],
+                "image_base64": self.image_base64,
+            }
+        ]
+
+
+def synthetic_event(
+    timestamp_sec: float,
+    *,
+    index: int = 0,
+    evidence_timestamps_sec: tuple[float, ...] | None = None,
+) -> AnalysisEvent:
+    return AnalysisEvent(
+        class_id=f"synthetic-class-{index}",
+        start_sec=max(0.0, timestamp_sec - 0.1),
+        end_sec=timestamp_sec + 0.1,
+        timecode_sec=timestamp_sec,
+        confidence=0.8,
+        observation="Синтетическое наблюдение только для интеграционного теста",
+        rule_id=f"synthetic-rule-{index}",
+        evidence_timestamps_sec=evidence_timestamps_sec or (timestamp_sec,),
+    )
+
+
 def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "environment": "test",
@@ -57,6 +97,13 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "upload_chunk_bytes": 1024,
         "ffprobe_path": shutil.which("ffprobe") or "ffprobe",
         "ffprobe_timeout_sec": 5.0,
+        "ffmpeg_path": shutil.which("ffmpeg") or "ffmpeg",
+        "evidence_timeout_sec": 5.0,
+        "evidence_max_width": 640,
+        "evidence_max_height": 480,
+        "evidence_max_jpeg_bytes": 1024 * 1024,
+        "evidence_jpeg_quality": 3,
+        "evidence_endpoint_scan_sec": 1.0,
         "max_queue_size": 8,
         "analysis_timeout_sec": 2.0,
     }
@@ -272,8 +319,25 @@ def test_valid_synthetic_mov_completes_without_violations(
         assert record.upload_duration_sec >= 0
         assert record.queue_duration_sec is not None and record.queue_duration_sec >= 0
         assert record.analyzer_duration_sec is not None and record.analyzer_duration_sec >= 0
+        assert record.evidence_duration_sec is not None and record.evidence_duration_sec >= 0
         assert record.total_duration_sec is not None and record.total_duration_sec >= 0
         assert not list((tmp_path / "storage").glob("*.mov"))
+
+    asyncio.run(scenario())
+
+
+def test_no_events_do_not_invoke_unavailable_ffmpeg(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        app = create_app(
+            make_settings(tmp_path, ffmpeg_path="/missing/ffmpeg"),
+            video_validator=AcceptingVideoValidator(),
+        )
+        async with app.router.lifespan_context(app):
+            accepted = await post_file(app, b"synthetic")
+            finished = await wait_for_terminal(app, accepted.json()["job_id"])
+        assert finished.json()["status"] == "done"
+        assert finished.json()["verdict"] == "no_violation"
+        assert finished.json()["violations"] == []
 
     asyncio.run(scenario())
 
@@ -388,6 +452,122 @@ def test_predefined_synthetic_events_complete_with_multiple_violations(
         assert payload["verdict"] == "violation"
         assert len(payload["violations"]) == 2
         assert all(len(event["evidence_frames"]) == 1 for event in payload["violations"])
+
+    asyncio.run(scenario())
+
+
+def test_real_evidence_e2e_for_one_event(
+    tmp_path: Path,
+    synthetic_mov: bytes,
+) -> None:
+    async def scenario() -> None:
+        analyzer = FakeAnalyzer(AnalysisResult(events=(synthetic_event(0.5),)))
+        app = create_app(make_settings(tmp_path), analyzer=analyzer)
+        async with app.router.lifespan_context(app):
+            accepted = await post_file(app, synthetic_mov)
+            finished = await wait_for_terminal(app, accepted.json()["job_id"])
+            record = app.state.job_manager.repository.get(accepted.json()["job_id"])
+
+        payload = finished.json()
+        assert accepted.status_code == 202
+        assert payload["status"] == "done"
+        assert payload["verdict"] == "violation"
+        assert len(payload["violations"]) == 1
+        frame = payload["violations"][0]["evidence_frames"][0]
+        assert set(frame) == {"timestamp_sec", "image_base64"}
+        assert not frame["image_base64"].startswith("data:")
+        assert record is not None
+        assert record.evidence_duration_sec is not None
+        assert record.evidence_duration_sec > 0
+        assert not list((tmp_path / "storage").glob("*.mov"))
+
+    asyncio.run(scenario())
+
+
+def test_real_evidence_e2e_for_two_events_and_multiple_frames(
+    tmp_path: Path,
+    synthetic_mov: bytes,
+) -> None:
+    events = (
+        synthetic_event(0.2, index=1, evidence_timestamps_sec=(0.1, 0.2, 0.3)),
+        synthetic_event(0.7, index=2),
+    )
+
+    async def scenario() -> None:
+        app = create_app(
+            make_settings(tmp_path),
+            analyzer=FakeAnalyzer(AnalysisResult(events=events)),
+        )
+        async with app.router.lifespan_context(app):
+            accepted = await post_file(app, synthetic_mov)
+            finished = await wait_for_terminal(app, accepted.json()["job_id"])
+
+        payload = finished.json()
+        assert payload["status"] == "done"
+        assert payload["verdict"] == "violation"
+        assert len(payload["violations"]) == 2
+        assert len(payload["violations"][0]["evidence_frames"]) == 3
+        assert len(payload["violations"][1]["evidence_frames"]) == 1
+
+    asyncio.run(scenario())
+
+
+def test_out_of_range_evidence_timestamp_fails_without_path_leak(
+    tmp_path: Path,
+    synthetic_mov: bytes,
+) -> None:
+    async def scenario() -> None:
+        app = create_app(
+            make_settings(tmp_path),
+            analyzer=FakeAnalyzer(AnalysisResult(events=(synthetic_event(2.0),))),
+        )
+        async with app.router.lifespan_context(app):
+            accepted = await post_file(app, synthetic_mov)
+            finished = await wait_for_terminal(app, accepted.json()["job_id"])
+            record = app.state.job_manager.repository.get(accepted.json()["job_id"])
+
+        assert finished.json() == {"status": "failed"}
+        assert str(tmp_path) not in finished.content.decode("utf-8")
+        assert record is not None
+        assert record.error_code == "EvidenceExtractionError"
+        assert not list((tmp_path / "storage").glob("*.mov"))
+
+    asyncio.run(scenario())
+
+
+def test_ffmpeg_error_fails_job_instead_of_returning_no_violation(
+    tmp_path: Path,
+    synthetic_mov: bytes,
+) -> None:
+    async def scenario() -> None:
+        app = create_app(
+            make_settings(tmp_path, ffmpeg_path="/missing/ffmpeg"),
+            analyzer=FakeAnalyzer(AnalysisResult(events=(synthetic_event(0.5),))),
+        )
+        async with app.router.lifespan_context(app):
+            accepted = await post_file(app, synthetic_mov)
+            finished = await wait_for_terminal(app, accepted.json()["job_id"])
+        assert finished.json() == {"status": "failed"}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("payload", ["not-base64", "bm90LWEtanBlZw=="])
+def test_invalid_evidence_payload_fails_job(
+    tmp_path: Path,
+    payload: str,
+) -> None:
+    async def scenario() -> None:
+        app = create_app(
+            make_settings(tmp_path),
+            analyzer=FakeAnalyzer(AnalysisResult(events=(synthetic_event(0.5),))),
+            video_validator=AcceptingVideoValidator(),
+            evidence_extractor=InvalidEvidenceExtractor(payload),
+        )
+        async with app.router.lifespan_context(app):
+            accepted = await post_file(app, b"synthetic")
+            finished = await wait_for_terminal(app, accepted.json()["job_id"])
+        assert finished.json() == {"status": "failed"}
 
     asyncio.run(scenario())
 

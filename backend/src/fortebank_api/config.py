@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     upload_chunk_bytes: int = 1024 * 1024
     ffprobe_path: str = "ffprobe"
     ffprobe_timeout_sec: float = 10.0
+    ffmpeg_path: str = "ffmpeg"
+    evidence_timeout_sec: float = 10.0
+    evidence_max_width: int = 1280
+    evidence_max_height: int = 720
+    evidence_max_jpeg_bytes: int = 4 * 1024 * 1024
+    evidence_jpeg_quality: int = 3
+    evidence_endpoint_scan_sec: float = 2.0
     max_queue_size: int = 8
     analysis_timeout_sec: float = 240.0
 
@@ -49,6 +56,16 @@ class Settings(BaseSettings):
             raise ValueError("APP_UPLOAD_CHUNK_BYTES must be positive")
         if self.ffprobe_timeout_sec <= 0:
             raise ValueError("APP_FFPROBE_TIMEOUT_SEC must be positive")
+        if self.evidence_timeout_sec <= 0:
+            raise ValueError("APP_EVIDENCE_TIMEOUT_SEC must be positive")
+        if self.evidence_max_width < 2 or self.evidence_max_height < 2:
+            raise ValueError("Evidence dimensions must be at least 2 pixels")
+        if self.evidence_max_jpeg_bytes <= 0:
+            raise ValueError("APP_EVIDENCE_MAX_JPEG_BYTES must be positive")
+        if not 2 <= self.evidence_jpeg_quality <= 31:
+            raise ValueError("APP_EVIDENCE_JPEG_QUALITY must be between 2 and 31")
+        if self.evidence_endpoint_scan_sec <= 0:
+            raise ValueError("APP_EVIDENCE_ENDPOINT_SCAN_SEC must be positive")
         if self.max_queue_size <= 0:
             raise ValueError("APP_MAX_QUEUE_SIZE must be positive")
         if self.analysis_timeout_sec <= 0:

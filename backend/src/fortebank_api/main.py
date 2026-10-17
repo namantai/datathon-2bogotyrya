@@ -12,11 +12,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from fortebank_api.analyzers import Analyzer, DisabledAnalyzer, FakeAnalyzer
 from fortebank_api.api import router as api_router
 from fortebank_api.config import Settings, get_settings
+from fortebank_api.evidence import VideoEvidenceExtractor
 from fortebank_api.jobs import (
     EvidenceExtractor,
     JobManager,
     JobRepository,
-    UnavailableEvidenceExtractor,
 )
 from fortebank_api.schemas import HealthResponse
 from fortebank_api.storage import VideoStorage
@@ -64,11 +64,21 @@ def create_app(
         runtime_settings.ffprobe_path,
         runtime_settings.ffprobe_timeout_sec,
     )
+    selected_evidence_extractor = evidence_extractor or VideoEvidenceExtractor(
+        ffmpeg_path=runtime_settings.ffmpeg_path,
+        ffprobe_path=runtime_settings.ffprobe_path,
+        timeout_sec=runtime_settings.evidence_timeout_sec,
+        max_width=runtime_settings.evidence_max_width,
+        max_height=runtime_settings.evidence_max_height,
+        max_jpeg_bytes=runtime_settings.evidence_max_jpeg_bytes,
+        jpeg_quality=runtime_settings.evidence_jpeg_quality,
+        endpoint_scan_sec=runtime_settings.evidence_endpoint_scan_sec,
+    )
     manager = JobManager(
         repository=repository,
         storage=storage,
         analyzer=selected_analyzer,
-        evidence_extractor=evidence_extractor or UnavailableEvidenceExtractor(),
+        evidence_extractor=selected_evidence_extractor,
         max_queue_size=runtime_settings.max_queue_size,
         analysis_timeout_sec=runtime_settings.analysis_timeout_sec,
     )
@@ -84,8 +94,8 @@ def create_app(
     application = FastAPI(
         title=runtime_settings.name,
         debug=runtime_settings.debug,
-        version="0.2.0",
-        description="Secure local video-analysis API; real ML is not integrated yet.",
+        version="0.3.0",
+        description="Secure local video-analysis API with local evidence extraction.",
         lifespan=lifespan,
     )
     application.add_middleware(RequestTimingMiddleware)

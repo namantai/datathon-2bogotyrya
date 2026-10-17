@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import sqlite3
 import time
 from collections.abc import Iterator
@@ -32,6 +33,10 @@ class QueueCapacityError(RuntimeError):
     """Raised before registration when the bounded queue is full."""
 
 
+class InvalidAnalysisEventError(ValueError):
+    """Raised before extraction when an analyzer event is structurally unsafe."""
+
+
 class EvidenceExtractor(Protocol):
     """Backend-owned boundary for extracting original frames by timestamp."""
 
@@ -41,18 +46,6 @@ class EvidenceExtractor(Protocol):
         timestamps_sec: tuple[float, ...],
     ) -> list[EvidenceFrame]:
         """Return validated JPEG frames for one event."""
-
-
-class UnavailableEvidenceExtractor:
-    """Fail closed until real local frame extraction is integrated."""
-
-    async def extract(
-        self,
-        video_path: Path,
-        timestamps_sec: tuple[float, ...],
-    ) -> list[EvidenceFrame]:
-        del video_path, timestamps_sec
-        raise RuntimeError("Evidence extraction is not integrated")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +58,7 @@ class JobRecord:
     upload_duration_sec: float
     queue_duration_sec: float | None
     analyzer_duration_sec: float | None
+    evidence_duration_sec: float | None
     total_duration_sec: float | None
 
 
@@ -93,10 +87,19 @@ class JobRepository:
                     upload_duration_sec REAL NOT NULL,
                     queue_duration_sec REAL,
                     analyzer_duration_sec REAL,
+                    evidence_duration_sec REAL,
                     total_duration_sec REAL
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+            }
+            if "evidence_duration_sec" not in columns:
+                connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN evidence_duration_sec REAL"
+                )
 
     def create(
         self,
@@ -135,19 +138,22 @@ class JobRepository:
         *,
         completed_at: float,
         analyzer_duration_sec: float,
+        evidence_duration_sec: float,
     ) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
                 UPDATE jobs
                 SET state = 'done', completed_at = ?, result_json = ?, error_code = NULL,
-                    analyzer_duration_sec = ?, total_duration_sec = ? - created_at
+                    analyzer_duration_sec = ?, evidence_duration_sec = ?,
+                    total_duration_sec = ? - created_at
                 WHERE job_id = ? AND state = 'running'
                 """,
                 (
                     completed_at,
                     result.model_dump_json(),
                     analyzer_duration_sec,
+                    evidence_duration_sec,
                     completed_at,
                     job_id,
                 ),
@@ -187,7 +193,8 @@ class JobRepository:
                 """
                 SELECT job_id, state, video_path, result_json, error_code,
                        upload_duration_sec, queue_duration_sec,
-                       analyzer_duration_sec, total_duration_sec
+                       analyzer_duration_sec, evidence_duration_sec,
+                       total_duration_sec
                 FROM jobs WHERE job_id = ?
                 """,
                 (job_id,),
@@ -203,6 +210,7 @@ class JobRepository:
             upload_duration_sec=row["upload_duration_sec"],
             queue_duration_sec=row["queue_duration_sec"],
             analyzer_duration_sec=row["analyzer_duration_sec"],
+            evidence_duration_sec=row["evidence_duration_sec"],
             total_duration_sec=row["total_duration_sec"],
         )
 
@@ -304,18 +312,17 @@ class JobManager:
             return
 
         self.repository.mark_running(job_id, time.time())
-        analyzer_started = time.perf_counter()
         try:
-            result = await asyncio.wait_for(
+            result, analyzer_duration, evidence_duration = await asyncio.wait_for(
                 self._analyze_and_build(job_id, record.video_path),
                 timeout=self.analysis_timeout_sec,
             )
-            analyzer_duration = time.perf_counter() - analyzer_started
             self.repository.mark_done(
                 job_id,
                 result,
                 completed_at=time.time(),
                 analyzer_duration_sec=analyzer_duration,
+                evidence_duration_sec=evidence_duration,
             )
         except asyncio.CancelledError:
             self.repository.mark_failed(job_id, "worker_stopped", time.time())
@@ -331,9 +338,14 @@ class JobManager:
         self,
         job_id: str,
         video_path: Path,
-    ) -> DoneJobResponse:
+    ) -> tuple[DoneJobResponse, float, float]:
+        analyzer_started = time.perf_counter()
         analysis = await self.analyzer.analyze_video(video_path)
-        return await self._build_result(job_id, video_path, analysis)
+        analyzer_duration = time.perf_counter() - analyzer_started
+        evidence_started = time.perf_counter()
+        result = await self._build_result(job_id, video_path, analysis)
+        evidence_duration = time.perf_counter() - evidence_started
+        return result, analyzer_duration, evidence_duration
 
     async def _build_result(
         self,
@@ -349,6 +361,8 @@ class JobManager:
                 violations=[],
             )
 
+        for event in analysis.events:
+            self._validate_event(event)
         violations = [
             await self._build_violation(video_path, event)
             for event in analysis.events
@@ -375,3 +389,42 @@ class JobManager:
             description=event.observation,
             evidence_frames=frames,
         )
+
+    @staticmethod
+    def _validate_event(event: AnalysisEvent) -> None:
+        if not isinstance(event.class_id, str) or not event.class_id.strip():
+            raise InvalidAnalysisEventError("Event class_id must be non-blank")
+        if not isinstance(event.observation, str) or not event.observation.strip():
+            raise InvalidAnalysisEventError("Event observation must be non-blank")
+        if not isinstance(event.rule_id, str) or not event.rule_id.strip():
+            raise InvalidAnalysisEventError("Event rule_id must be non-blank")
+
+        numeric_values = (
+            event.start_sec,
+            event.end_sec,
+            event.timecode_sec,
+            event.confidence,
+        )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in numeric_values
+        ):
+            raise InvalidAnalysisEventError("Event numbers must be finite")
+        if event.start_sec < 0 or event.end_sec < 0 or event.timecode_sec < 0:
+            raise InvalidAnalysisEventError("Event times must be non-negative")
+        if not 1 <= len(event.evidence_timestamps_sec) <= 3:
+            raise InvalidAnalysisEventError(
+                "An event requires one to three evidence timestamps"
+            )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+            for value in event.evidence_timestamps_sec
+        ):
+            raise InvalidAnalysisEventError(
+                "Evidence timestamps must be finite and non-negative"
+            )
