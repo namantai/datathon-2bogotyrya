@@ -6,7 +6,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from fortebank_api.analyzers import Analyzer, DisabledAnalyzer, FakeAnalyzer
@@ -18,6 +18,7 @@ from fortebank_api.jobs import (
     JobManager,
     JobRepository,
 )
+from fortebank_api.jury_ingress import JuryIngressMiddleware
 from fortebank_api.schemas import HealthResponse
 from fortebank_api.storage import VideoStorage
 from fortebank_api.video_validation import FFprobeVideoValidator, VideoValidator
@@ -85,6 +86,8 @@ def create_app(
         evidence_extractor=selected_evidence_extractor,
         max_queue_size=runtime_settings.max_queue_size,
         analysis_timeout_sec=runtime_settings.analysis_timeout_sec,
+        job_retention_sec=runtime_settings.job_retention_sec,
+        cleanup_interval_sec=runtime_settings.cleanup_interval_sec,
     )
 
     @asynccontextmanager
@@ -105,6 +108,7 @@ def create_app(
     application.add_middleware(RequestTimingMiddleware)
     security = UISecurity(runtime_settings)
     application.add_middleware(UIBoundaryMiddleware, security=security)
+    application.add_middleware(JuryIngressMiddleware, settings=runtime_settings)
     application.state.ui_security = security
     application.state.ui_analyzer_mode = (
         "fake" if isinstance(selected_analyzer, FakeAnalyzer)
@@ -124,6 +128,8 @@ def create_app(
         summary="Check service availability",
     )
     async def health() -> HealthResponse:
+        if manager._worker_task is not None and not manager.is_running:
+            raise HTTPException(503, "Local worker is unavailable")
         return HealthResponse(
             status="ok",
             service=runtime_settings.name,

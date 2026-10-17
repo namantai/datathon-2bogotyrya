@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables."""
 
 from functools import lru_cache
+import math
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -39,6 +40,10 @@ class Settings(BaseSettings):
     database_path: Path = Path("./storage/jobs.sqlite3")
     max_upload_bytes: int = 128 * 1024 * 1024
     upload_chunk_bytes: int = 1024 * 1024
+    jury_upload_timeout_sec: float = 60.0
+    max_jury_uploads: int = 4
+    job_retention_sec: float = 86400.0
+    cleanup_interval_sec: float = 300.0
     ffprobe_path: str = "ffprobe"
     ffprobe_timeout_sec: float = 10.0
     ffmpeg_path: str = "ffmpeg"
@@ -59,6 +64,11 @@ class Settings(BaseSettings):
             raise ValueError("APP_MAX_UPLOAD_BYTES must be positive")
         if self.upload_chunk_bytes <= 0:
             raise ValueError("APP_UPLOAD_CHUNK_BYTES must be positive")
+        if self.max_jury_uploads <= 0:
+            raise ValueError("APP_MAX_JURY_UPLOADS must be positive")
+        for value in (self.jury_upload_timeout_sec, self.job_retention_sec, self.cleanup_interval_sec):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError("Upload timeout, retention and cleanup interval must be finite and positive")
         if self.ffprobe_timeout_sec <= 0:
             raise ValueError("APP_FFPROBE_TIMEOUT_SEC must be positive")
         if self.evidence_timeout_sec <= 0:

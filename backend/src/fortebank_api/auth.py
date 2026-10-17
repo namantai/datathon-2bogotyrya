@@ -20,7 +20,7 @@ async def require_api_key(
         )
 
     expected = configured.get_secret_value()
-    if x_api_key is None or not secrets.compare_digest(x_api_key, expected):
+    if x_api_key is None or not secrets.compare_digest(x_api_key.encode(), expected.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized",

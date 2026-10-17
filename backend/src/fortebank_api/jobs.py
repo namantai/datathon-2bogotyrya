@@ -33,6 +33,10 @@ class QueueCapacityError(RuntimeError):
     """Raised before registration when the bounded queue is full."""
 
 
+class WorkerUnavailableError(RuntimeError):
+    """Raised when no running worker can process a newly submitted job."""
+
+
 class InvalidAnalysisEventError(ValueError):
     """Raised before extraction when an analyzer event is structurally unsafe."""
 
@@ -100,6 +104,20 @@ class JobRepository:
                 connection.execute(
                     "ALTER TABLE jobs ADD COLUMN evidence_duration_sec REAL"
                 )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS jobs_terminal_age ON jobs(completed_at) "
+                "WHERE state IN ('done', 'failed')"
+            )
+
+    def delete_expired(self, cutoff: float, *, batch_size: int = 100) -> int:
+        """Delete a bounded batch of terminal results only; active jobs are never eligible."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM jobs WHERE job_id IN (SELECT job_id FROM jobs "
+                "WHERE state IN ('done', 'failed') AND completed_at < ? "
+                "ORDER BY completed_at LIMIT ?)", (cutoff, batch_size),
+            )
+            return cursor.rowcount
 
     def create(
         self,
@@ -220,6 +238,7 @@ class JobRepository:
         try:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA busy_timeout = 5000")
+            connection.execute("PRAGMA secure_delete = ON")
             with connection:
                 yield connection
         finally:
@@ -238,29 +257,59 @@ class JobManager:
         evidence_extractor: EvidenceExtractor,
         max_queue_size: int,
         analysis_timeout_sec: float,
+        job_retention_sec: float = 86400.0,
+        cleanup_interval_sec: float = 300.0,
     ) -> None:
         self.repository = repository
         self.storage = storage
         self.analyzer = analyzer
         self.evidence_extractor = evidence_extractor
         self.analysis_timeout_sec = analysis_timeout_sec
+        self.job_retention_sec = job_retention_sec
+        self.cleanup_interval_sec = cleanup_interval_sec
         self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=max_queue_size)
         self._submit_lock = asyncio.Lock()
         self._worker_task: asyncio.Task[None] | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._worker_task is not None and not self._worker_task.done()
 
     async def start(self) -> None:
         self.storage.initialize()
         self.repository.initialize()
         for path in self.repository.recover_unfinished(time.time()):
             self.storage.delete(path)
+        self.storage.clean_startup_orphans()
+        self.repository.delete_expired(time.time() - self.job_retention_sec)
         self._worker_task = asyncio.create_task(self._worker(), name="analysis-worker")
+        self._cleanup_task = asyncio.create_task(self._cleanup(), name="result-cleanup")
+
+    async def _cleanup(self) -> None:
+        while True:
+            await asyncio.sleep(self.cleanup_interval_sec)
+            try:
+                self.repository.delete_expired(time.time() - self.job_retention_sec)
+            except Exception as exc:
+                # An intermittent cleanup error must not kill processing or leak SQL/data.
+                logger.error("Result cleanup failed (%s)", type(exc).__name__)
 
     async def stop(self) -> None:
+        if self._cleanup_task is not None:
+            self._cleanup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._cleanup_task
+            self._cleanup_task = None
         if self._worker_task is None:
             return
         self._worker_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        try:
             await self._worker_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error("Worker stopped unexpectedly (%s)", type(exc).__name__)
         self._worker_task = None
         for path in self.repository.recover_unfinished(time.time()):
             self.storage.delete(path)
@@ -274,6 +323,8 @@ class JobManager:
         upload_duration_sec: float,
     ) -> None:
         async with self._submit_lock:
+            if not self.is_running:
+                raise WorkerUnavailableError("Local worker is unavailable")
             if self._queue.full():
                 raise QueueCapacityError("The local analysis queue is full")
             queued_at = time.time()
@@ -291,6 +342,10 @@ class JobManager:
         if record is None:
             return None
         if record.state in {"queued", "running"}:
+            if not self.is_running:
+                self.repository.mark_failed(job_id, "worker_unavailable", time.time())
+                self.storage.delete(record.video_path)
+                return FailedJobResponse(status="failed")
             return ProcessingJobResponse(status="processing")
         if record.state == "failed":
             return FailedJobResponse(status="failed")

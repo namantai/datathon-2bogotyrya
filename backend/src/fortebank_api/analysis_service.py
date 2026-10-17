@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, Request, UploadFile, status
 
-from fortebank_api.jobs import JobManager, QueueCapacityError
+from fortebank_api.jobs import JobManager, QueueCapacityError, WorkerUnavailableError
 from fortebank_api.schemas import AnalyzeAccepted, JobResponse
 from fortebank_api.storage import (
     EmptyUploadError,
@@ -64,11 +64,11 @@ async def submit_video(
             created_at=created_at,
             upload_duration_sec=time.perf_counter() - request_started,
         )
-    except QueueCapacityError as exc:
+    except (QueueCapacityError, WorkerUnavailableError) as exc:
         storage.delete(saved.path)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Analysis queue is full",
+            detail="Local worker is unavailable" if isinstance(exc, WorkerUnavailableError) else "Analysis queue is full",
         ) from exc
     except BaseException:
         storage.delete(saved.path)

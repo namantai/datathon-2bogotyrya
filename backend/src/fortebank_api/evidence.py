@@ -122,6 +122,8 @@ class VideoEvidenceExtractor:
     async def _probe_timeline(self, path: Path) -> _VideoTimeline:
         command = [
             self.ffprobe_path,
+            "-protocol_whitelist", "file,pipe",
+            "-format_whitelist", "mov",
             "-v",
             "error",
             "-select_streams",
@@ -229,6 +231,8 @@ class VideoEvidenceExtractor:
             "-copyts",
             "-ss",
             f"{seek_sec:.9f}",
+            "-protocol_whitelist", "file,pipe",
+            "-format_whitelist", "mov",
             "-i",
             str(path),
             "-map",
@@ -276,6 +280,8 @@ class VideoEvidenceExtractor:
         scan_end = min(timeline.duration_sec + 1e-3, requested_sec + 1e-3)
         command = [
             self.ffprobe_path,
+            "-protocol_whitelist", "file,pipe",
+            "-format_whitelist", "mov",
             "-v",
             "error",
             "-select_streams",

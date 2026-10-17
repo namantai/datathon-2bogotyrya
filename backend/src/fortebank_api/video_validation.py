@@ -32,6 +32,8 @@ class FFprobeVideoValidator:
     async def validate(self, path: Path) -> None:
         command = [
             self.executable,
+            "-protocol_whitelist", "file,pipe",
+            "-format_whitelist", "mov",
             "-v",
             "error",
             "-select_streams",
@@ -62,6 +64,11 @@ class FFprobeVideoValidator:
             process.kill()
             await process.communicate()
             raise VideoValidationUnavailableError("FFprobe validation timed out") from exc
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                process.kill()
+            await process.communicate()
+            raise
 
         if process.returncode != 0:
             raise InvalidVideoError("The uploaded file is not a valid video")

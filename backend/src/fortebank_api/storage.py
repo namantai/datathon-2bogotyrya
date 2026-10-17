@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -43,6 +44,19 @@ class VideoStorage:
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
+
+    def clean_startup_orphans(self) -> int:
+        """Single-worker startup only, after unfinished jobs have been recovered.
+
+        This directory is private application storage, never a user media folder.
+        Only our generated names are eligible; links/directories are not followed.
+        """
+        removed = 0
+        for path in self.root.iterdir():
+            if re.fullmatch(r"[0-9a-f]{32}\.mov", path.name) and not path.is_symlink() and path.is_file():
+                path.unlink()
+                removed += 1
+        return removed
 
     async def save(self, upload: UploadFile) -> SavedUpload:
         filename = upload.filename or ""

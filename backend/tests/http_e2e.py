@@ -32,7 +32,7 @@ from tests.test_api import synthetic_event
 
 
 class HTTPTestAnalyzer(FakeAnalyzer):
-    """Predefined empty, multiple-event and failure scenarios, test fixture only."""
+    """Predefined empty, one/multiple-event and failure scenarios, test fixture only."""
 
     def __init__(self):
         super().__init__()
@@ -45,6 +45,8 @@ class HTTPTestAnalyzer(FakeAnalyzer):
         if self.calls == 1:
             return AnalysisResult()
         if self.calls == 2:
+            return AnalysisResult((synthetic_event(.2),))
+        if self.calls == 3:
             return AnalysisResult(tuple(synthetic_event(t, index=i) for i, t in enumerate((.2, 1.2))))
         raise RuntimeError("Synthetic private exception must not reach HTTP")
 
@@ -63,8 +65,10 @@ def run():
     backend = Path(__file__).resolve().parents[1]
     frontend = backend.parent / "frontend"
     ui_port = int(os.environ.get("FORTE_HTTP_UI_PORT", "5173"))
+    backend_port = int(os.environ.get("FORTE_HTTP_BACKEND_PORT", "8001"))
+    backend_origin = f"http://127.0.0.1:{backend_port}"
     origin = f"http://localhost:{ui_port}"
-    for host, port in (("127.0.0.1", 8001), ("localhost", ui_port)):
+    for host, port in (("127.0.0.1", backend_port), ("localhost", ui_port)):
         try:
             probe = socket.create_connection((host, port), timeout=.5)
         except ConnectionRefusedError:
@@ -81,14 +85,14 @@ def run():
                "APP_UI_ALLOWED_ORIGINS": json.dumps([origin]),
                "APP_UI_SESSION_TTL_SEC": "1800", "APP_MAX_UPLOAD_BYTES": "2097152",
                "PYTHONPATH": str(backend / "src"), "VITE_UI_MODE": "bridge",
-               "UI_PROXY_TARGET": "http://127.0.0.1:8001"}
+               "UI_PROXY_TARGET": backend_origin}
         # Do not give server secrets to the Vite subprocess.
         vite_env = {k: v for k, v in env.items() if not k.startswith("APP_")}
         logs = [root / "backend.log", root / "vite.log"]
         outputs = [resources.enter_context(path.open("wb")) for path in logs]
         opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         def call(path, *, method="GET", data=None, headers=None, direct=False):
-            url = ("http://127.0.0.1:8001" if direct else origin) + path
+            url = (backend_origin if direct else origin) + path
             req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
             try:
                 result = opener.open(req, timeout=10)
@@ -99,7 +103,7 @@ def run():
                 return result.status, body, result.headers
         try:
             processes.append(subprocess.Popen([sys.executable, "-m", "uvicorn", "tests.http_e2e:create_test_app",
-                "--factory", "--host", "127.0.0.1", "--port", "8001", "--no-access-log", "--no-proxy-headers"],
+                "--factory", "--host", "127.0.0.1", "--port", str(backend_port), "--no-access-log", "--no-proxy-headers"],
                 cwd=backend, env=env, stdout=outputs[0], stderr=subprocess.STDOUT))
             processes.append(subprocess.Popen([shutil.which("node") or "node", "node_modules/vite/bin/vite.js", "--port", str(ui_port)],
                 cwd=frontend, env=vite_env, stdout=outputs[1], stderr=subprocess.STDOUT))
@@ -135,7 +139,7 @@ def run():
                         headers={**upload_headers, "X-CSRF-Token": "wrong"})[0] == 403
             assert call("/api/v1/analyze", direct=True, method="POST", data=body,
                         headers={"Content-Type": media_type})[0] == 401
-            for expected in ("no_violation", "violation", "failed"):
+            for expected, event_count in (("no_violation", 0), ("violation", 1), ("violation", 2), ("failed", 0)):
                 status, accepted, _ = call("/ui-api/analyze", method="POST", data=body, headers=upload_headers)
                 assert status == 202
                 job_id = json.loads(accepted)["job_id"]
@@ -154,7 +158,7 @@ def run():
                     assert result == {"status": "failed"}
                 else:
                     assert result["status"] == "done" and result["verdict"] == expected
-                    assert len(result["violations"]) == (2 if expected == "violation" else 0)
+                    assert len(result["violations"]) == event_count
                     for event in result["violations"]:
                         for frame in event["evidence_frames"]:
                             jpeg = base64.b64decode(frame["image_base64"], validate=True)
@@ -164,7 +168,7 @@ def run():
                 assert not list((root / "storage").glob("*.mov"))
             assert call("/ui-api/session", method="DELETE", headers={"Origin": origin, "X-CSRF-Token": csrf})[0] == 204
             assert call("/ui-api/session")[0] == 401
-            print("PASS: real Vite proxy → FastAPI → SQLite/worker; login, CSRF, processing, no_violation, multiple events/JPEG, failed, repeat, logout. Synthetic data only; not a browser E2E.")
+            print("PASS: real Vite proxy → FastAPI → SQLite/worker; login, CSRF, processing, no_violation, one/multiple events/JPEG, failed, repeat, logout. Synthetic data only; not a browser E2E.")
         except Exception:
             for log in logs:
                 print(log.read_text().replace(code, "[redacted]").replace(jury_key, "[redacted]")[-2500:])
