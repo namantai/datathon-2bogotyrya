@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     debug: bool = False
     api_key: SecretStr | None = None
-    ui_access_code: SecretStr | None = None
     ui_allowed_origins: list[str] = ["http://localhost:5173"]
     ui_session_ttl_sec: int = 1800
     analyzer_mode: Literal["disabled", "fake"] = "disabled"
@@ -89,21 +88,15 @@ class Settings(BaseSettings):
         raw_key = self.api_key.get_secret_value() if self.api_key is not None else ""
         if not 60 <= self.ui_session_ttl_sec <= 3600:
             raise ValueError("UI session lifetime must be 60–3600 seconds")
-        if self.ui_access_code is not None:
-            code = self.ui_access_code.get_secret_value()
-            if len(code) < 24 or len(code) > 256 or code != code.strip() or code == raw_key:
-                raise ValueError("UI access code must be 24–256 characters and distinct from API key")
-            if code.lower() in _PRODUCTION_PLACEHOLDERS:
-                raise ValueError("Replace the placeholder UI access code")
-            if not self.ui_allowed_origins:
-                raise ValueError("Explicit UI origins are required")
+        if not self.ui_allowed_origins:
+            raise ValueError("Explicit UI origins are required")
         for origin in self.ui_allowed_origins:
             parsed = urlsplit(origin)
             if (parsed.scheme not in {"http", "https"} or not parsed.hostname
                     or parsed.username or parsed.password or parsed.path
                     or parsed.query or parsed.fragment or "*" in origin):
                 raise ValueError("UI origins must be exact HTTP(S) origins without paths")
-            if self.environment == "production" and self.ui_access_code and parsed.scheme != "https":
+            if self.environment == "production" and parsed.scheme != "https":
                 raise ValueError("Production UI requires HTTPS origins")
         if self.api_key is not None:
             if not raw_key or raw_key != raw_key.strip():

@@ -14,7 +14,7 @@ Two developers: ML and Fullstack.
 
 ## Project status
 
-TASK 06A: локально работают React → защищённый same-origin `/ui-api` → FastAPI → bounded worker/SQLite → FFmpeg JPEG. Есть отдельный код UI, HttpOnly-сессия, CSRF/Origin-защита и изоляция заданий. API жюри сохраняет `X-API-Key` и исходный JSON. Добавлены ранние ограничения загрузки, обработка остановленного worker и настраиваемая очистка старых результатов.
+TASK 06A: локально работают React → защищённый same-origin `/ui-api` → FastAPI → bounded worker/SQLite → FFmpeg JPEG. Dashboard открывается без пароля и регистрации. Автоматическая анонимная HttpOnly-сессия сохраняет CSRF/Origin-защиту и изоляцию заданий. API жюри сохраняет `X-API-Key` и исходный JSON. Добавлены ранние ограничения загрузки, обработка остановленного worker и настраиваемая очистка старых результатов.
 
 **Настоящая модель пока не подключена.** `FakeAnalyzer` разрешён только в dev/test и явно помечен в UI; production его отклоняет. `disabled` даёт `failed`, не выдуманный вердикт. Нормативная карта и ML-контракт требуют согласования. Публичный HTTPS ещё не развёрнут. Измерения синтетики не являются оценкой качества AI или доказательством SLA.
 
@@ -43,14 +43,13 @@ python3 -m venv .venv
 source .venv/bin/activate.fish
 python -m pip install -e '.[dev]'
 read --silent --prompt-str 'API key жюри: ' --export APP_API_KEY
-read --silent --prompt-str 'Отдельный код Web UI: ' --export APP_UI_ACCESS_CODE
 set -gx APP_ENVIRONMENT development
 set -gx APP_ANALYZER_MODE fake
 set -gx APP_UI_ALLOWED_ORIGINS '["http://localhost:5173"]'
 uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8001 --workers 1 --no-proxy-headers --no-access-log
 ```
 
-Нужны установленные локально FFmpeg/FFprobe. Используйте два разных случайных секрета из менеджера паролей: API key ≥16 символов, UI-код 24–256. Не вводите секреты прямо в команду/history. Альтернатива — приватный `backend/.env` по [.env.example](.env.example), без коммита. `GET http://127.0.0.1:8001/health` проверяет процесс/worker, **не готовность ML**. Настройки: [backend/README.md](backend/README.md).
+Нужны установленные локально FFmpeg/FFprobe. API key жюри — случайный секрет ≥16 символов из менеджера паролей. Для Web UI пароль не требуется; устаревший `APP_UI_ACCESS_CODE` больше не используется. Не вводите секреты прямо в команду/history. Альтернатива — приватный `backend/.env` по [.env.example](.env.example), без коммита. `GET http://127.0.0.1:8001/health` проверяет процесс/worker, **не готовность ML**. Настройки: [backend/README.md](backend/README.md).
 
 ## Локальный запуск Frontend (Fish, отдельный терминал без секретов)
 
@@ -62,7 +61,7 @@ set -gx UI_PROXY_TARGET http://127.0.0.1:8001
 npm run dev
 ```
 
-Откройте `http://localhost:5173`, введите **UI-код, не API key**. Используйте только синтетику до согласования обработки данных. Production build: `npm run build`; Vite dev/preview не является production HTTPS-сервером. Сценарии и тесты: [frontend/README.md](frontend/README.md).
+Откройте `http://localhost:5173`: Dashboard виден сразу, а сессия создаётся автоматически. API key в браузер не вводится. Используйте только синтетику до согласования обработки данных. Production build: `npm run build`; Vite dev/preview не является production HTTPS-сервером. Сценарии и тесты: [frontend/README.md](frontend/README.md).
 
 ## Проверки и ограничения
 
@@ -79,7 +78,7 @@ env PYTHONPATH=src python -m tests.benchmark
 
 Оба сценария генерируют только синтетические MOV в приватных временных каталогах, закрывают собственные процессы и удаляют свои данные. Это HTTP-проверки, не браузерная автоматизация. Benchmark: 10/60/145 с, по 3 запроса, два тестовых события / шесть исходных JPEG на результат.
 
-Один Uvicorn-процесс, один worker; restart завершает незавершённые задания как `failed`, а сессии UI сбрасывает. MOV удаляются после обработки. Терминальные JSON/JPEG хранятся 24 часа по умолчанию (командное решение, настраивается), очищаются пакетами; недавние результаты сохраняются при restart. Истёкшие результаты дают `404`. Это не персональная система аудита и не долговременный архив.
+Один Uvicorn-процесс, один worker; restart завершает незавершённые задания как `failed`, а сессии UI сбрасывает. MOV удаляются после обработки. Терминальные JSON/JPEG хранятся 24 часа по умолчанию (командное решение, настраивается), очищаются пакетами; недавние результаты сохраняются при restart. Истёкшие результаты дают `404`. Это не персональная система аудита и не долговременный архив. Изоляция действует между cookie-сессиями (например, разными профилями браузера), не между людьми за общим браузером.
 
 Замеры выполнены на CPU i5-12450H / ~15.3 GiB RAM, без ML. Это **не минимальные требования для модели**. GPU/VRAM, веса, лицензии и запас RAM должен подтвердить ML Engineer. Для публичного стенда нужен постоянно включённый компьютер, приватное локальное хранилище, доступный HTTPS и отдельно проверенный лимит 5 минут с очередью и реальной моделью.
 

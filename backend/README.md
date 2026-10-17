@@ -42,7 +42,6 @@ uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8001 --no-p
 | Переменная | Назначение | Значение примера |
 |---|---|---|
 | `APP_API_KEY` | Секрет для `X-API-Key` | заменить локально |
-| `APP_UI_ACCESS_CODE` | отдельный код UI, 24–256 символов; без него bridge закрыт (`503`) | не задан |
 | `APP_UI_ALLOWED_ORIGINS` | JSON-массив точных Origin без завершающего `/`; production только HTTPS | `["http://localhost:5173"]` |
 | `APP_UI_SESSION_TTL_SEC` | абсолютный срок сессии, 60–3600 секунд, без продления polling | `1800` |
 | `APP_ANALYZER_MODE` | `disabled` или dev/test `fake` | `fake` |
@@ -129,9 +128,9 @@ API жюри проверяет ключ **до чтения multipart**. HTTP-�
 
 Реализован один in-process worker. Backend следует запускать одним Uvicorn-процессом без `--workers N`. Это не распределённая очередь: незавершённые задания после перезапуска не возобновляются, а безопасно финализируются как `failed`.
 
-## TASK 05A: Web UI bridge
+## Web UI bridge без ручного входа
 
-Внутренние маршруты: `POST /ui-api/session` (JSON `access_code`), `GET /ui-api/session`, `DELETE /ui-api/session`, `POST /ui-api/analyze` (multipart `file`) и `GET /ui-api/jobs/{job_id}`. Они исключены из OpenAPI жюри. Оба транспорта вызывают общий `analysis_service.py`, прежние SQLite и worker, без HTTP-запросов Backend к самому себе. Публичный JSON и авторизация жюри не изменены.
+Внутренние маршруты: `POST /ui-api/session` (пустое тело, автоматическое создание/восстановление анонимной сессии), `POST /ui-api/analyze` (multipart `file`) и `GET /ui-api/jobs/{job_id}`. Ручной login и logout удалены; GET/DELETE `/ui-api/session` возвращают `405`. `APP_UI_ACCESS_CODE` не используется. Они исключены из OpenAPI жюри. Оба транспорта вызывают общий `analysis_service.py`, прежние SQLite и worker, без HTTP-запросов Backend к самому себе. Публичный JSON и авторизация жюри не изменены.
 
 Сессия возвращает только CSRF-token, фактический лимит файла и признак `fake` / `disabled` / `local`. Это отдельный внутренний протокол UI. Ключ жюри не используется bridge и не нужен Vite.
 
@@ -143,30 +142,29 @@ API жюри проверяет ключ **до чтения multipart**. HTTP-�
 cd backend
 source .venv/bin/activate.fish
 read --silent --prompt-str 'API key жюри: ' --export APP_API_KEY
-read --silent --prompt-str 'Отдельный код Web UI: ' --export APP_UI_ACCESS_CODE
 set -gx APP_ENVIRONMENT development
 set -gx APP_ANALYZER_MODE fake
 set -gx APP_UI_ALLOWED_ORIGINS '["http://localhost:5173"]'
 uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8001 --no-proxy-headers
 ```
 
-Используйте два независимо сгенерированных случайных секрета, например из менеджера паролей. `read --silent` не отображает значение и не записывает его в shell history. Альтернатива — закрытый локальный `backend/.env` по корневому `.env.example`, не попадающий в Git. Пример кода UI закомментирован и как placeholder не принимается. Терминал 2 описан в [Frontend README](../frontend/README.md).
+Используйте случайный секрет API жюри, например из менеджера паролей; UI-кода больше нет. `read --silent` не отображает значение и не записывает его в shell history. Альтернатива — закрытый локальный `backend/.env` по корневому `.env.example`, не попадающий в Git. Существующий `APP_UI_ACCESS_CODE` можно удалить из локальной конфигурации: он игнорируется. Терминал 2 описан в [Frontend README](../frontend/README.md).
 
 ### Защита и ограничения
 
 - Случайный 256-битный токен; сервер хранит его SHA-256 и сессию в памяти. Cookie: `HttpOnly; SameSite=Strict; Path=/ui-api`, без Domain; production добавляет `Secure`.
-- Все изменяющие UI-запросы требуют разрешённого Origin, включая login. Upload/logout дополнительно требуют `X-CSRF-Token`. Cross-site Fetch Metadata отклоняется, CORS не включён. Проверки выполняются до чтения тела.
-- Глобально 10 попыток входа в минуту (включая успешные), максимум 64 сессии. Лимитер не зависит от подделываемых forwarded headers. Недостаток простого общего лимита: злоумышленник может временно исчерпать его для остальных; при `429` повторить через минуту.
+- Все изменяющие UI-запросы требуют разрешённого Origin, включая bootstrap. Upload дополнительно требует `X-CSRF-Token`. Bootstrap не принимает credentials, не загружает видео и не меняет действующую сессию/TTL; он возвращает CSRF для дальнейших запросов. Cross-site Fetch Metadata отклоняется, CORS не включён. Проверки выполняются до чтения тела.
+- Глобально 10 bootstrap-запросов в минуту (включая успешные и восстановление существующей сессии), максимум 64 сессии. Лимитер не зависит от подделываемых forwarded headers. Недостаток простого общего лимита: злоумышленник может временно исчерпать его для остальных; при `429` повторить через минуту.
 - Глобально 6 попыток upload в минуту, 2 одновременных HTTP-upload, 1 незавершённое задание на сессию, 64 задания за срок сессии. Ошибочные авторизованные uploads тоже расходуют лимит. Прежний лимит очереди сохраняется.
-- Multipart-body: максимум `APP_MAX_UPLOAD_BYTES + 64 KiB` на служебные данные; файл — строго `APP_MAX_UPLOAD_BYTES`. Проверяется поток, не только Content-Length; приём тела — 60 секунд. Login-body — до 4 KiB. Частичные multipart-файлы закрываются при ошибках парсинга/лимита.
-- UI видит только задания своей сессии; её набор ID — метаданные доступа, не вторая очередь. Logout/expiry/restart закрывают UI-доступ к прежним результатам, но не отменяют worker. Refresh восстанавливает сессию, но не выбранный файл/историю. API жюри остаётся доступен только по ключу.
-- Bridge отвечает с `Cache-Control: no-store`, `nosniff` и безопасными ошибками. Не логировать cookies, коды, CSRF, тела запросов и кадры в приложении или reverse proxy.
+- Multipart-body: максимум `APP_MAX_UPLOAD_BYTES + 64 KiB` на служебные данные; файл — строго `APP_MAX_UPLOAD_BYTES`. Проверяется поток, не только Content-Length; приём тела — 60 секунд. Bootstrap принимает только пустое тело; чтение ограничено 4 KiB, старый login JSON отклоняется. Частичные multipart-файлы закрываются при ошибках парсинга/лимита.
+- UI видит только задания своей сессии; её набор ID — метаданные доступа, не вторая очередь. Expiry/restart/очистка cookies закрывают UI-доступ к прежним результатам, но не отменяют worker. Новая анонимная сессия не наследует чужие или истёкшие задания. Refresh восстанавливает сессию, но не выбранный файл/историю. API жюри остаётся доступен только по ключу.
+- Bridge отвечает с `Cache-Control: no-store`, `nosniff` и безопасными ошибками. Не логировать cookies, API key, CSRF, тела запросов и кадры в приложении или reverse proxy.
 
 ### Production — пока не развёрнуто
 
 Нужны HTTPS и один доверенный origin для статического `frontend/dist` и `/ui-api`, проксируемого в FastAPI без изменения Origin/cookies. Не кэшировать bridge; ограничить тела/соединения/таймауты на reverse proxy; не включать wildcard CORS. Backend напрямую в сеть не выставлять, использовать один worker. Vite dev server не является production-сервером.
 
-Настройки: `APP_ENVIRONMENT=production`, `APP_DEBUG=false`, независимые секреты, HTTPS в `APP_UI_ALLOWED_ORIGINS`. Без UI-кода bridge закрыт. FakeAnalyzer запрещён и конфигурацией, и проверкой внедрённого объекта. Пока модели нет, `disabled` даёт `failed`, а не ложный отрицательный вердикт. Реальный локальный адаптер — отдельный TASK 05B.
+Настройки: `APP_ENVIRONMENT=production`, `APP_DEBUG=false`, секрет API жюри, непустой список HTTPS в `APP_UI_ALLOWED_ORIGINS`. UI общедоступен; анонимная сессия изолирует задания, но не идентифицирует людей и не заменяет инфраструктурную защиту от злоупотреблений. FakeAnalyzer запрещён и конфигурацией, и проверкой внедрённого объекта. Пока модели нет, `disabled` даёт `failed`, а не ложный отрицательный вердикт. Реальный локальный адаптер — отдельный TASK 05B.
 
 С TASK 06A терминальные JSON/JPEG очищаются по `APP_JOB_RETENTION_SEC` (24 часа по умолчанию): до 100 записей при старте и каждые `APP_CLEANUP_INTERVAL_SEC`. Активные и недавние результаты не удаляются; TTL отсчитывается от завершения, очистка не мгновенная. Истёкший ID даёт `404`; TTL сессии отдельно и не удаляет БД. Согласуйте retention с организаторами до банковских данных.
 
@@ -188,4 +186,4 @@ env PYTHONPATH=src FORTE_HTTP_UI_PORT=5174 FORTE_HTTP_BACKEND_PORT=8002 python -
 env PYTHONPATH=src python -m tests.benchmark
 ```
 
-HTTP-тест требует установленных Frontend dependencies, Node, FFmpeg и разрешённых loopback-сокетов. Сам создаёт временные секреты/MOV, запускает Vite + FastAPI, проверяет login/cookie/CSRF, SQLite/worker, `processing → done`, несколько событий/JPEG, `failed`, повтор и logout, затем останавливает свои процессы. Это **HTTP E2E, не автоматизация браузера**. Реальный ML, пяти­минутный SLA на целевом железе и публичный deployment не проверены.
+HTTP-тест требует установленных Frontend dependencies, Node, FFmpeg и разрешённых loopback-сокетов. Сам создаёт временные секреты/MOV, запускает Vite + FastAPI, проверяет анонимный bootstrap/cookie/CSRF и изоляцию двух посетителей, SQLite/worker, `processing → done`, несколько событий/JPEG, `failed`, повтор и неизменную защиту API жюри, затем останавливает свои процессы. Это **HTTP E2E, не автоматизация браузера**. Реальный ML, пяти­минутный SLA на целевом железе и публичный deployment не проверены.

@@ -32,7 +32,7 @@ class UISecurity:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.sessions: dict[str, Session] = {}
-        self.logins: deque[float] = deque()
+        self.bootstraps: deque[float] = deque()
         self.uploads: deque[float] = deque()
         self.active_uploads = 0
 
@@ -58,7 +58,7 @@ class UISecurity:
         token = request.cookies.get(COOKIE, "")
         session = self.sessions.get(self.digest(token)) if len(token) <= 128 else None
         if session is None:
-            raise HTTPException(401, "UI authentication required")
+            raise HTTPException(401, "UI session required")
         return session
 
     def origin(self, request: Request, *, required: bool) -> None:
@@ -68,16 +68,13 @@ class UISecurity:
         if request.headers.get("sec-fetch-site") == "cross-site":
             raise HTTPException(403, "Cross-site request rejected")
 
-    def revoke(self, request: Request) -> None:
-        self.sessions.pop(self.digest(request.cookies.get(COOKIE, "")), None)
-
-    def login(self, request: Request, code: object) -> tuple[str, Session]:
-        expected = self.settings.ui_access_code
-        if (not isinstance(code, str) or len(code) > 256 or expected is None
-                or not secrets.compare_digest(code.encode(), expected.get_secret_value().encode())):
-            raise HTTPException(401, "Invalid UI access code")
+    def bootstrap(self, request: Request) -> tuple[str | None, Session]:
+        """Reuse a visitor's session without rotating its token or extending its TTL."""
         self.prune()
-        self.revoke(request)
+        token = request.cookies.get(COOKIE, "")
+        existing = self.sessions.get(self.digest(token)) if len(token) <= 128 else None
+        if existing is not None:
+            return None, existing
         if len(self.sessions) >= 64:
             raise HTTPException(429, "Session capacity reached")
         token = secrets.token_urlsafe(32)
@@ -113,14 +110,14 @@ class UIBoundaryMiddleware:
             await send(message)
 
         try:
-            if security.settings.ui_access_code is None:
-                raise HTTPException(503, "UI access is not configured")
+            if scope["path"] == "/ui-api/session" and request.method != "POST":
+                raise HTTPException(405, "Method not allowed", headers={"Allow": "POST"})
             modifying = request.method not in {"GET", "HEAD"}
             security.origin(request, required=modifying)
-            login = scope["path"] == "/ui-api/session" and request.method == "POST"
-            if login:
+            bootstrap = scope["path"] == "/ui-api/session" and request.method == "POST"
+            if bootstrap:
                 # A global bounded limiter is deliberately independent of spoofable proxy headers.
-                security.consume(security.logins, 10)
+                security.consume(security.bootstraps, 10)
             else:
                 session = security.session(request)
                 scope.setdefault("state", {})["ui_session"] = session

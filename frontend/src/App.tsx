@@ -1,54 +1,65 @@
 import { useEffect, useState } from "react";
 import type { AnalysisService } from "./lib/contracts";
+import { UiError } from "./lib/contracts";
 import { loadService } from "./services";
+import { bootstrapSession, createBridgeService } from "./services/bridge";
 import { useAnalysis } from "./hooks/useAnalysis";
 import { UploadCard } from "./components/UploadCard";
 import { AnalysisStatus } from "./components/AnalysisStatus";
 import { Results } from "./components/Results";
 import { Icon } from "./components/Icon";
-import { AccessGate } from "./components/AccessGate";
 
-export default function App({
-  service,
-  onLogout,
-}: {
-  service?: AnalysisService | null;
-  onLogout?: () => void;
-}) {
+export default function App({ service }: { service?: AnalysisService | null }) {
   const [api, setApi] = useState<AnalysisService | null>(service ?? null);
   const [ready, setReady] = useState(service !== undefined);
+  const [connectionError, setConnectionError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (service !== undefined) return;
     let mounted = true;
-    void loadService().then(
-      (value) => {
-        if (mounted) {
-          setApi(value);
-          setReady(true);
+    let controller: AbortController | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function connect() {
+      setApi(null);
+      setReady(false);
+      setConnectionError("");
+      try {
+        const mock = await loadService();
+        // StrictMode's discarded effect must not issue a second session POST.
+        if (!mounted) return;
+        if (mock) setApi(mock);
+        else {
+          controller = new AbortController();
+          timer = setTimeout(() => controller?.abort(), 10_000);
+          const info = await bootstrapSession(controller.signal);
+          if (mounted && !controller.signal.aborted)
+            setApi(
+              createBridgeService(info, () => {
+                if (mounted) void connect();
+              }),
+            );
         }
-      },
-      () => {
+      } catch (error) {
+        if (mounted)
+          setConnectionError(
+            error instanceof UiError
+              ? error.message
+              : "Backend не ответил. Повторите подключение.",
+          );
+      } finally {
+        clearTimeout(timer);
         if (mounted) setReady(true);
-      },
-    );
+      }
+    }
+    void connect();
     return () => {
       mounted = false;
+      controller?.abort();
+      clearTimeout(timer);
     };
-  }, [service]);
+  }, [service, attempt]);
   const analysis = useAnalysis(api),
     demo = api?.mode === "demo";
-  if (!ready && service === undefined)
-    return (
-      <main className="access-page">
-        <p role="status">Подготовка интерфейса…</p>
-      </main>
-    );
-  if (ready && !api && service === undefined)
-    return (
-      <AccessGate>
-        {(connected, logout) => <App service={connected} onLogout={logout} />}
-      </AccessGate>
-    );
   return (
     <div className="app-shell">
       <a href="#main" className="skip-link">
@@ -72,11 +83,6 @@ export default function App({
                 ? "Локальный Backend"
                 : "Подключение не настроено"}
           </span>
-          {onLogout && (
-            <button className="text-button" onClick={onLogout}>
-              Выйти
-            </button>
-          )}
         </div>
       </header>
       <main id="main" className="main">
@@ -112,8 +118,20 @@ export default function App({
                     : "Видео обрабатывается локально. Результат требует проверки человеком."
                 : ready
                   ? "Анализ пока недоступен. Ожидается безопасное серверное подключение; демонстрация отключена в production."
-                  : "Подготовка интерфейса…"}
+                  : "Подключение к Backend…"}
             </p>
+          </div>
+        )}
+        {connectionError && (
+          <div className="error-banner" role="alert">
+            <p>{connectionError}</p>
+            <button
+              className="text-button"
+              disabled={!ready}
+              onClick={() => setAttempt((value) => value + 1)}
+            >
+              Повторить подключение
+            </button>
           </div>
         )}
         {analysis.error && (

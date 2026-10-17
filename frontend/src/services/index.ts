@@ -4,6 +4,6 @@ export async function loadService(): Promise<AnalysisService | null> {
     const { createMockService } = await import("./mock");
     return createMockService();
   }
-  // null selects the authenticated same-origin AccessGate, including production.
+  // null selects the anonymous same-origin bridge, including production.
   return null;
 }

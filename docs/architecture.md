@@ -10,7 +10,7 @@
 
 Frontend отвечает за пользовательский сценарий: выбор `.mov`, отображение хода обработки, одного из двух итоговых вердиктов, списка событий, таймкодов, кадров-доказательств и проверенных нормативных источников.
 
-Ключ жюри `X-API-Key` нельзя передавать в browser JavaScript. С TASK 05A UI использует внутренний same-origin `/ui-api`: отдельный код доступа, короткую HttpOnly-сессию и CSRF. Bridge вызывает общий `analysis_service.py` напрямую, без передачи ключа в браузер и без HTTP self-call. Очередь, SQLite, validator и evidence extractor общие с API жюри. UI-сессия хранит лишь ограниченный набор ID для проверки доступа, не копию результатов/состояний заданий.
+Ключ жюри `X-API-Key` нельзя передавать в browser JavaScript. С TASK 05A UI использует внутренний same-origin `/ui-api`: автоматическую анонимную HttpOnly-сессию и CSRF, без ручного входа. Bridge вызывает общий `analysis_service.py` напрямую, без передачи ключа в браузер и без HTTP self-call. Очередь, SQLite, validator и evidence extractor общие с API жюри. UI-сессия хранит лишь ограниченный набор ID для проверки доступа, не копию результатов/состояний заданий.
 
 ### Backend
 
@@ -47,7 +47,7 @@ ML-модуль отвечает за локальный анализ видео
 - отдельная внутренняя метрика времени evidence extraction;
 - автоматические security, API, lifecycle и schema tests;
 - React dashboard: загрузка, polling, результаты/кадры, безопасные ошибки и отмена ожидания;
-- same-origin bridge с access code, Origin/CSRF, лимитами и изоляцией заданий по сессиям;
+- same-origin bridge с анонимной сессией, Origin/CSRF, лимитами и изоляцией заданий по сессиям;
 - Vite dev proxy, явный dev mock и production-сборка без mock;
 - синтетические bridge integration tests и отдельный настоящий HTTP E2E через Vite/FastAPI;
 - базовые правила исключения локальных данных и секретов из Git;

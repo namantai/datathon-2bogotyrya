@@ -10,7 +10,7 @@ import App from "../src/App";
 import { analyze } from "../src/lib/analysis";
 import {
   createBridgeService,
-  getSession,
+  bootstrapSession,
   SessionExpired,
 } from "../src/services/bridge";
 import { loadService } from "../src/services";
@@ -71,15 +71,15 @@ it("invalidates expired sessions and never treats network/JSON errors as a verdi
   ).rejects.toBeInstanceOf(SessionExpired);
   expect(expired).toHaveBeenCalledOnce();
   fetch.mockRejectedValue(new Error("PRIVATE_HOST"));
-  await expect(getSession(new AbortController().signal)).rejects.toThrow(
+  await expect(bootstrapSession(new AbortController().signal)).rejects.toThrow(
     "Нет связи",
   );
   fetch.mockResolvedValue(new Response("invalid-json"));
-  await expect(getSession(new AbortController().signal)).rejects.toThrow(
+  await expect(bootstrapSession(new AbortController().signal)).rejects.toThrow(
     "некорректный ответ",
   );
   fetch.mockResolvedValue(response({ ...info, max_upload_bytes: -1 }));
-  await expect(getSession(new AbortController().signal)).rejects.toThrow(
+  await expect(bootstrapSession(new AbortController().signal)).rejects.toThrow(
     "конфигурация",
   );
 });
@@ -134,7 +134,7 @@ it("aborts real adapter polling and reports failed without fabricating results",
   expect(fetch).toHaveBeenCalledTimes(3);
 });
 
-it("uses authenticated server upload limits", async () => {
+it("uses server upload limits", async () => {
   const fetch = fetchMock();
   await expect(
     analyze(
@@ -148,57 +148,114 @@ it("uses authenticated server upload limits", async () => {
   expect(fetch).not.toHaveBeenCalled();
 });
 
-it("shows login, wrong code, authenticated fake warning and logout", async () => {
+it("opens the dashboard immediately and bootstraps without credentials", async () => {
   vi.stubEnv("VITE_UI_MODE", "bridge");
-  const fetch = fetchMock().mockResolvedValueOnce(response({}, 401));
+  const fetch = fetchMock().mockResolvedValue(response(info));
   render(<App />);
-  const input = await screen.findByLabelText("Код доступа Web UI");
-  await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
-  fetch.mockResolvedValueOnce(response({}, 401));
-  fireEvent.change(input, { target: { value: "wrong-code" } });
-  fireEvent.click(screen.getByRole("button", { name: "Войти" }));
-  expect(await screen.findByRole("alert")).toBeTruthy();
-  expect((input as HTMLInputElement).value).toBe("");
-  fetch.mockResolvedValueOnce(response(info));
-  fireEvent.change(input, { target: { value: "synthetic-ui-access-code" } });
-  fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+  expect(screen.getByLabelText("MOV-видео")).toBeTruthy();
+  expect(screen.queryByLabelText("Код доступа Web UI")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Войти|Выйти/ })).toBeNull();
   expect(
     await screen.findByText(/Тестовый Backend · FakeAnalyzer/),
   ).toBeTruthy();
   expect(screen.queryByLabelText("Демонстрационный сценарий")).toBeNull();
-  fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
-  fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
-  expect(await screen.findByLabelText("Код доступа Web UI")).toBeTruthy();
-  expect(fetch.mock.lastCall?.[1]).toMatchObject({
-    method: "DELETE",
-    headers: { "X-CSRF-Token": info.csrf_token },
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0][0]).toBe("/ui-api/session");
+  expect(fetch.mock.calls[0][1]).toMatchObject({
+    method: "POST",
+    credentials: "same-origin",
   });
+  expect(fetch.mock.calls[0][1]?.body).toBeUndefined();
 });
 
-it("returns to login when an upload sees an expired session", async () => {
+it.each([0, 2])(
+  "uploads from the anonymous dashboard and shows %s events",
+  async (count) => {
+    vi.stubEnv("VITE_UI_MODE", "bridge");
+    const fetch = fetchMock()
+      .mockResolvedValueOnce(response(info))
+      .mockResolvedValueOnce(response({ job_id: "test-job" }, 202))
+      .mockResolvedValueOnce(response(done(count)));
+    render(<App />);
+    await screen.findByText(/Тестовый Backend · FakeAnalyzer/);
+    fireEvent.change(screen.getByLabelText("MOV-видео"), {
+      target: { files: [file()] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText(
+            count
+              ? "Обнаружены признаки возможных нарушений"
+              : "Нарушение не обнаружено",
+          ),
+        ).toBeTruthy(),
+      { timeout: 3000 },
+    );
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual([
+      "/ui-api/session",
+      "/ui-api/analyze",
+      "/ui-api/jobs/test-job",
+    ]);
+    expect(screen.queryByRole("button", { name: /Войти|Выйти/ })).toBeNull();
+  },
+);
+
+it("restores an expired session once without automatically resubmitting the file", async () => {
   vi.stubEnv("VITE_UI_MODE", "bridge");
-  const fetch = fetchMock().mockResolvedValueOnce(response(info));
+  const fetch = fetchMock()
+    .mockResolvedValueOnce(response(info))
+    .mockResolvedValueOnce(response({}, 401))
+    .mockResolvedValueOnce(response(info));
   render(<App />);
-  const input = await screen.findByLabelText("MOV-видео");
-  fireEvent.change(input, { target: { files: [file()] } });
-  fetch.mockResolvedValueOnce(response({}, 401));
+  await screen.findByText(/Тестовый Backend · FakeAnalyzer/);
+  fireEvent.change(screen.getByLabelText("MOV-видео"), {
+    target: { files: [file()] },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
-  expect(await screen.findByLabelText("Код доступа Web UI")).toBeTruthy();
-  expect(screen.getByRole("alert").textContent).toContain("Сессия истекла");
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    expect.stringContaining("Сессия истекла"),
+  );
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  expect(fetch.mock.calls.map(([path]) => path)).toEqual([
+    "/ui-api/session",
+    "/ui-api/analyze",
+    "/ui-api/session",
+  ]);
+  expect(screen.queryByLabelText("Код доступа Web UI")).toBeNull();
 });
 
-it("restores the session without keeping credentials and ignores unmounted fetch", async () => {
+it("keeps the dashboard on bootstrap failure and retries only on explicit action", async () => {
+  vi.stubEnv("VITE_UI_MODE", "bridge");
+  const fetch = fetchMock().mockResolvedValueOnce(response({}, 503));
+  render(<App />);
+  const retry = await screen.findByRole("button", {
+    name: "Повторить подключение",
+  });
+  expect(screen.getByLabelText("MOV-видео")).toBeTruthy();
+  expect(fetch).toHaveBeenCalledOnce();
+  fetch.mockResolvedValueOnce(response(info));
+  fireEvent.click(retry);
+  await screen.findByText(/Тестовый Backend · FakeAnalyzer/);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("ignores an unmounted bootstrap response", async () => {
   vi.stubEnv("VITE_UI_MODE", "bridge");
   let resolve!: (r: Response) => void;
-  fetchMock().mockImplementation(
+  const fetch = fetchMock().mockImplementation(
     () =>
       new Promise((r) => {
         resolve = r;
       }),
   );
   const view = render(<App />);
-  await screen.findByLabelText("Код доступа Web UI");
+  await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+  const signal = fetch.mock.calls[0][1]?.signal;
   view.unmount();
+  expect(signal?.aborted).toBe(true);
   await act(async () => resolve(response(info)));
   expect(screen.queryByLabelText("MOV-видео")).toBeNull();
 });

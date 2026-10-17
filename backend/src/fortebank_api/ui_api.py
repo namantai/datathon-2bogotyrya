@@ -21,37 +21,24 @@ def session_info(request: Request, session: Session) -> dict:
 
 
 @router.post("/session")
-async def login(request: Request, response: Response) -> dict:
-    if request.headers.get("content-type", "").split(";")[0] != "application/json":
-        raise HTTPException(415, "JSON required")
+async def bootstrap_session(request: Request, response: Response) -> dict:
+    # Origin/Fetch Metadata and rate limit are checked before body consumption.
+    # No credentials, no login protocol; reject obsolete credential-bearing bodies.
     try:
-        payload = await request.json()
-    except (ValueError, UnicodeError, MultiPartException):
-        raise HTTPException(request.scope["state"].get("ui_body_error", 400), "Invalid login request") from None
-    if not isinstance(payload, dict) or set(payload) != {"access_code"}:
-        raise HTTPException(400, "Invalid login request")
+        body = await request.body()
+    except MultiPartException:
+        raise HTTPException(request.scope["state"].get("ui_body_error", 400), "Invalid session request") from None
+    if body:
+        raise HTTPException(400, "Session request must have an empty body")
     security = request.app.state.ui_security
-    token, session = security.login(request, payload["access_code"])
-    response.set_cookie(
-        COOKIE, token, max_age=security.settings.ui_session_ttl_sec,
-        httponly=True, secure=security.settings.environment == "production",
-        samesite="strict", path="/ui-api",
-    )
+    token, session = security.bootstrap(request)
+    if token is not None:
+        response.set_cookie(
+            COOKIE, token, max_age=security.settings.ui_session_ttl_sec,
+            httponly=True, secure=security.settings.environment == "production",
+            samesite="strict", path="/ui-api",
+        )
     return session_info(request, session)
-
-
-@router.get("/session")
-async def current_session(request: Request) -> dict:
-    return session_info(request, request.state.ui_session)
-
-
-@router.delete("/session", status_code=204)
-async def logout(request: Request) -> Response:
-    request.app.state.ui_security.revoke(request)
-    response = Response(status_code=204)
-    response.delete_cookie(COOKIE, path="/ui-api", httponly=True, samesite="strict",
-                           secure=request.app.state.settings.environment == "production")
-    return response
 
 
 @router.post("/analyze", response_model=AnalyzeAccepted, status_code=202)

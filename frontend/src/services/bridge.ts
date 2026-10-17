@@ -10,7 +10,7 @@ export interface SessionInfo {
 
 const messages: Record<number, string> = {
   400: "Файл или запрос некорректен. Выберите исправный MOV.",
-  403: "Проверка безопасности не пройдена. Обновите страницу и войдите снова.",
+  403: "Проверка безопасности не пройдена. Обновите страницу.",
   404: "Задание не найдено или недоступно этой сессии.",
   408: "Время загрузки истекло. Попробуйте ещё раз.",
   413: "Файл превышает допустимый размер.",
@@ -37,7 +37,7 @@ async function http(path: string, init: RequestInit): Promise<unknown> {
   }
   if (response.status === 401)
     throw new SessionExpired(
-      "Сессия истекла или код доступа неверен. Войдите снова.",
+      "Сессия истекла. После восстановления подключения можно запустить новую проверку. Файл автоматически не отправляется повторно; прежнее серверное задание могло продолжиться.",
     );
   if (!response.ok)
     throw new UiError(
@@ -52,21 +52,10 @@ async function http(path: string, init: RequestInit): Promise<unknown> {
   }
 }
 
-export async function getSession(
+export async function bootstrapSession(
   signal: AbortSignal,
-  accessCode?: string,
 ): Promise<SessionInfo> {
-  const value = await http(
-    "/session",
-    accessCode === undefined
-      ? { signal }
-      : {
-          method: "POST",
-          signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ access_code: accessCode }),
-        },
-  );
+  const value = await http("/session", { method: "POST", signal });
   const v = value as Partial<SessionInfo> | null;
   if (
     !v ||
@@ -80,26 +69,19 @@ export async function getSession(
   return v as SessionInfo;
 }
 
-export async function logoutSession(
-  info: SessionInfo,
-  signal: AbortSignal,
-): Promise<void> {
-  await http("/session", {
-    method: "DELETE",
-    signal,
-    headers: { "X-CSRF-Token": info.csrf_token },
-  });
-}
-
 export function createBridgeService(
   info: SessionInfo,
   onExpired: () => void,
 ): AnalysisService {
+  let expired = false;
   async function call(path: string, init: RequestInit) {
     try {
       return await http(path, init);
     } catch (error) {
-      if (error instanceof SessionExpired) onExpired();
+      if (error instanceof SessionExpired && !expired) {
+        expired = true;
+        onExpired();
+      }
       throw error;
     }
   }

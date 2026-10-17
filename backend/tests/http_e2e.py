@@ -79,9 +79,9 @@ def run():
     processes: list[subprocess.Popen] = []
     with tempfile.TemporaryDirectory(prefix="forteguard-http-") as temporary, ExitStack() as resources:
         root = Path(temporary)
-        code, jury_key = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        jury_key = secrets.token_urlsafe(32)
         env = {**os.environ, "FORTE_HTTP_TEST": "synthetic-only", "FORTE_HTTP_ROOT": temporary,
-               "APP_API_KEY": jury_key, "APP_UI_ACCESS_CODE": code,
+               "APP_API_KEY": jury_key,
                "APP_UI_ALLOWED_ORIGINS": json.dumps([origin]),
                "APP_UI_SESSION_TTL_SEC": "1800", "APP_MAX_UPLOAD_BYTES": "2097152",
                "PYTHONPATH": str(backend / "src"), "VITE_UI_MODE": "bridge",
@@ -91,11 +91,12 @@ def run():
         logs = [root / "backend.log", root / "vite.log"]
         outputs = [resources.enter_context(path.open("wb")) for path in logs]
         opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-        def call(path, *, method="GET", data=None, headers=None, direct=False):
+        foreign = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        def call(path, *, method="GET", data=None, headers=None, direct=False, visitor=None):
             url = (backend_origin if direct else origin) + path
             req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
             try:
-                result = opener.open(req, timeout=10)
+                result = (visitor or opener).open(req, timeout=10)
             except urllib.error.HTTPError as error:
                 result = error
             with result:
@@ -120,15 +121,18 @@ def run():
                     if time.monotonic() >= deadline:
                         raise RuntimeError("HTTP test servers did not become ready") from None
                     time.sleep(.1)
-            assert call("/ui-api/session")[0] == 401
-            status, body, headers = call("/ui-api/session", method="POST",
-                data=json.dumps({"access_code": code}).encode(),
-                headers={"Origin": origin, "Content-Type": "application/json"})
+            assert call("/ui-api/session")[0] == 405
+            assert call("/ui-api/session", method="POST", data=b"")[0] == 403
+            status, body, headers = call("/ui-api/session", method="POST", data=b"",
+                headers={"Origin": origin})
             assert status == 200 and "HttpOnly" in headers["Set-Cookie"]
-            assert code.encode() not in body and jury_key.encode() not in body
+            assert jury_key.encode() not in body
             csrf = json.loads(body)["csrf_token"]
             assert json.loads(body)["analyzer_mode"] == "fake"
-            assert call("/ui-api/session")[0] == 200
+            status, reused, headers = call("/ui-api/session", method="POST", data=b"", headers={"Origin": origin})
+            assert status == 200 and json.loads(reused)["csrf_token"] == csrf
+            assert "Set-Cookie" not in headers
+            assert call("/ui-api/session", method="POST", data=b"", headers={"Origin": origin}, visitor=foreign)[0] == 200
             video = root / "synthetic.mov"
             subprocess.run([shutil.which("ffmpeg") or "ffmpeg", "-v", "error", "-f", "lavfi",
                 "-i", "testsrc2=size=64x64:rate=10", "-t", "2", "-an", "-c:v", "mjpeg", str(video)],
@@ -145,6 +149,8 @@ def run():
                 job_id = json.loads(accepted)["job_id"]
                 path = f"/ui-api/jobs/{job_id}"
                 assert json.loads(call(path)[1]) == {"status": "processing"}
+                assert call(path, visitor=foreign)[0] == 404
+                assert call(f"/api/v1/jobs/{job_id}", direct=True)[0] == 401
                 deadline = time.monotonic() + 15
                 while True:
                     status, payload, _ = call(path)
@@ -166,12 +172,12 @@ def run():
                 with sqlite3.connect(root / "jobs.sqlite3") as db:
                     assert db.execute("SELECT state FROM jobs WHERE job_id=?", (job_id,)).fetchone()[0] == result["status"]
                 assert not list((root / "storage").glob("*.mov"))
-            assert call("/ui-api/session", method="DELETE", headers={"Origin": origin, "X-CSRF-Token": csrf})[0] == 204
-            assert call("/ui-api/session")[0] == 401
-            print("PASS: real Vite proxy → FastAPI → SQLite/worker; login, CSRF, processing, no_violation, one/multiple events/JPEG, failed, repeat, logout. Synthetic data only; not a browser E2E.")
+                assert json.loads(call(f"/api/v1/jobs/{job_id}", direct=True, headers={"X-API-Key": jury_key})[1]) == result
+            assert call("/ui-api/session", method="DELETE", headers={"Origin": origin})[0] == 405
+            print("PASS: real Vite proxy → FastAPI → SQLite/worker; anonymous bootstrap/reuse, visitor isolation, CSRF, jury key enforcement, processing, no_violation, one/multiple events/JPEG, failed, repeat. Synthetic data only; not a browser E2E.")
         except Exception:
             for log in logs:
-                print(log.read_text().replace(code, "[redacted]").replace(jury_key, "[redacted]")[-2500:])
+                print(log.read_text().replace(jury_key, "[redacted]")[-2500:])
             raise
         finally:
             for process in reversed(processes):
