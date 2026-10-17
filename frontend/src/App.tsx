@@ -1,39 +1,139 @@
-const foundationItems = [
-  "Локальный Backend на FastAPI",
-  "Интерфейс на React и TypeScript",
-  "Подготовка к интеграции локального ML",
-];
+import { useEffect, useState } from "react";
+import type { AnalysisService } from "./lib/contracts";
+import { loadService } from "./services";
+import { useAnalysis } from "./hooks/useAnalysis";
+import { UploadCard } from "./components/UploadCard";
+import { AnalysisStatus } from "./components/AnalysisStatus";
+import { Results } from "./components/Results";
+import { Icon } from "./components/Icon";
 
-function App() {
+export default function App({ service }: { service?: AnalysisService | null }) {
+  const [api, setApi] = useState<AnalysisService | null>(service ?? null);
+  const [ready, setReady] = useState(service !== undefined);
+  useEffect(() => {
+    if (service !== undefined) return;
+    let mounted = true;
+    void loadService().then(
+      (value) => {
+        if (mounted) {
+          setApi(value);
+          setReady(true);
+        }
+      },
+      () => {
+        if (mounted) setReady(true);
+      },
+    );
+    return () => {
+      mounted = false;
+    };
+  }, [service]);
+  const analysis = useAnalysis(api),
+    demo = api?.mode === "demo";
   return (
-    <main className="page-shell">
-      <section className="hero" aria-labelledby="page-title">
-        <p className="eyebrow">ForteBank DATATHON 2026</p>
-        <h1 id="page-title">Анализ кассовых операций по видеозаписи</h1>
-        <p className="lead">
-          Создаём локальный сервис, который поможет находить визуальные признаки
-          возможных нарушений и показывать проверяемые доказательства.
-        </p>
-
-        <div className="status-card" role="status">
-          <span className="status-dot" aria-hidden="true" />
-          <div>
-            <strong>Этап 01: технический фундамент</strong>
+    <div className="app-shell">
+      <a href="#main" className="skip-link">
+        К основному содержимому
+      </a>
+      <header className="header">
+        <a className="brand" href="/" aria-label="ForteGuard AI — главная">
+          <span className="brand-mark">
+            <Icon name="shield" size={26} />
+          </span>
+          <span>
+            ForteGuard <em>AI</em>
+          </span>
+        </a>
+        <div className="header-meta">
+          <span className="project-tag">DATATHON 2026</span>
+          <span className={`mode-tag ${demo ? "demo" : ""}`}>
+            {demo ? "Демонстрационный режим" : "Подключение не настроено"}
+          </span>
+        </div>
+      </header>
+      <main id="main" className="main">
+        <div className="page-intro">
+          <p className="eyebrow">ВИДЕОАНАЛИТИКА КАССОВЫХ ОПЕРАЦИЙ</p>
+          <h1>
+            Каждое событие —<br />
+            <span>в поле внимания.</span>
+          </h1>
+          <p className="lead">
+            Проверяйте записи, изучайте наблюдаемые действия
+            <br className="desktop-break" /> и принимайте решения на основе
+            кадров.
+          </p>
+        </div>
+        {demo ? (
+          <div className="demo-banner">
+            <span className="demo-label">ДЕМО</span>
             <p>
-              Загрузка и анализ видео ещё не реализованы. Сейчас доступен только
-              стартовый интерфейс проекта.
+              Вы проверяете интерфейс на синтетических данных. Видео не
+              анализируется и не отправляется на сервер.
             </p>
           </div>
+        ) : (
+          <div className="demo-banner" role="status">
+            <Icon name="shield" />
+            <p>
+              {ready
+                ? "Анализ пока недоступен. Ожидается безопасное серверное подключение; демонстрация отключена в production."
+                : "Подготовка интерфейса…"}
+            </p>
+          </div>
+        )}
+        {analysis.error && (
+          <div className="error-banner" role="alert">
+            <strong>Проверка не выполнена</strong>
+            <p>{analysis.error}</p>
+          </div>
+        )}
+        {analysis.notice && (
+          <p className="notice" role="status">
+            {analysis.notice}
+          </p>
+        )}
+        <div className="workspace">
+          <UploadCard
+            file={analysis.file}
+            busy={analysis.busy}
+            available={Boolean(api)}
+            demo={demo}
+            onSelect={analysis.selectFile}
+            onStart={analysis.start}
+            onCancel={analysis.cancel}
+          />
+          <AnalysisStatus
+            phase={analysis.phase}
+            jobId={analysis.jobId}
+            demo={demo}
+          />
         </div>
-
-        <ul className="foundation-list" aria-label="Компоненты фундамента">
-          {foundationItems.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      </section>
-    </main>
+        {analysis.result ? (
+          <Results
+            model={{ result: analysis.result }}
+            demo={demo}
+            onReset={() => analysis.selectFile(null)}
+          />
+        ) : (
+          <section className="empty-result">
+            <span className="empty-icon">
+              <Icon name="video" size={27} />
+            </span>
+            <div>
+              <h2>Здесь появится результат</h2>
+              <p>
+                Вердикт, временные отметки и кадры по каждому обнаруженному
+                событию.
+              </p>
+            </div>
+          </section>
+        )}
+        <footer>
+          <span>ForteGuard AI · Командный прототип</span>
+          <span>Визуальный анализ · Без идентификации лиц</span>
+        </footer>
+      </main>
+    </div>
   );
 }
-
-export default App;
