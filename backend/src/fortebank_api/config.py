@@ -3,6 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,12 +24,16 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     name: str = "ForteBank DATATHON API"
     environment: Literal["development", "test", "production"] = "development"
     debug: bool = False
     api_key: SecretStr | None = None
+    ui_access_code: SecretStr | None = None
+    ui_allowed_origins: list[str] = ["http://localhost:5173"]
+    ui_session_ttl_sec: int = 1800
     analyzer_mode: Literal["disabled", "fake"] = "disabled"
     storage_dir: Path = Path("./storage")
     database_path: Path = Path("./storage/jobs.sqlite3")
@@ -72,6 +77,24 @@ class Settings(BaseSettings):
             raise ValueError("APP_ANALYSIS_TIMEOUT_SEC must be positive")
 
         raw_key = self.api_key.get_secret_value() if self.api_key is not None else ""
+        if not 60 <= self.ui_session_ttl_sec <= 3600:
+            raise ValueError("UI session lifetime must be 60–3600 seconds")
+        if self.ui_access_code is not None:
+            code = self.ui_access_code.get_secret_value()
+            if len(code) < 24 or len(code) > 256 or code != code.strip() or code == raw_key:
+                raise ValueError("UI access code must be 24–256 characters and distinct from API key")
+            if code.lower() in _PRODUCTION_PLACEHOLDERS:
+                raise ValueError("Replace the placeholder UI access code")
+            if not self.ui_allowed_origins:
+                raise ValueError("Explicit UI origins are required")
+        for origin in self.ui_allowed_origins:
+            parsed = urlsplit(origin)
+            if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                    or parsed.username or parsed.password or parsed.path
+                    or parsed.query or parsed.fragment or "*" in origin):
+                raise ValueError("UI origins must be exact HTTP(S) origins without paths")
+            if self.environment == "production" and self.ui_access_code and parsed.scheme != "https":
+                raise ValueError("Production UI requires HTTPS origins")
         if self.api_key is not None:
             if not raw_key or raw_key != raw_key.strip():
                 raise ValueError("APP_API_KEY cannot be empty or surrounded by whitespace")
@@ -79,6 +102,8 @@ class Settings(BaseSettings):
                 raise ValueError("APP_API_KEY must contain at least 16 characters")
 
         if self.environment == "production":
+            if self.debug:
+                raise ValueError("Debug must be disabled in production")
             if not raw_key or raw_key.lower() in _PRODUCTION_PLACEHOLDERS:
                 raise ValueError("A non-placeholder APP_API_KEY is required in production")
             if self.analyzer_mode == "fake":

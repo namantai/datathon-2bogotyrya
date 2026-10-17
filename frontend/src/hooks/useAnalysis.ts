@@ -37,7 +37,7 @@ export function useAnalysis(api: AnalysisService | null) {
     setError("");
     try {
       if (multiple) throw new UiError("Выберите одну видеозапись за раз.");
-      if (next) validateFile(next);
+      if (next) validateFile(next, api?.maxUploadBytes);
       setFile(next);
       setPhase(next ? "file_selected" : "idle");
     } catch (e) {

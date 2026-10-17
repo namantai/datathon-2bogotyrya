@@ -28,6 +28,8 @@ export interface ResultViewModel {
 }
 export interface AnalysisService {
   readonly mode: "demo" | "bridge";
+  readonly analyzerMode?: "fake" | "disabled" | "local";
+  readonly maxUploadBytes?: number;
   submit(file: File, signal: AbortSignal, scenario: Scenario): Promise<unknown>;
   getJob(jobId: string, signal: AbortSignal): Promise<unknown>;
 }

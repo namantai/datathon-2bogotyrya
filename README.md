@@ -14,7 +14,7 @@ Two developers: ML and Fullstack.
 
 ## Project status
 
-Этап 03: защищённый Backend API дополнен локальным извлечением настоящих JPEG evidence frames через FFmpeg с фактическими PTS и ресурсными ограничениями. Настоящий ML inference и полноценный пользовательский интерфейс пока отсутствуют.
+Этап 04: интерфейс ForteGuard AI поддерживает загрузку MOV, статусы, вердикты, события и кадры в явно обозначенном development mock-режиме. Backend умеет локально извлекать JPEG evidence frames. Настоящий ML и безопасный серверный bridge для UI пока не подключены; production UI отключает отправку до интеграции.
 
 ## Стек
 
@@ -56,6 +56,7 @@ npm run dev
 ```
 
 Production-сборка проверяется командой `npm run build`.
+Сценарии, тесты, ограничения и план безопасной интеграции: [frontend/README.md](frontend/README.md).
 
 ## Документация
 

@@ -11,6 +11,8 @@ for (const forbidden of [
   "СИНТЕТИЧЕСКИЙ ТЕСТ",
   "Не является кадром загруженного видео",
   "X-API-Key",
+  "APP_API_KEY",
+  "127.0.0.1:8001",
   "/api/v1/analyze",
   "localStorage",
   "sessionStorage",
@@ -23,6 +25,7 @@ assert.ok(
   !assets.some((name) => /^mock-/.test(name)),
   "Mock chunk must not ship",
 );
+assert.ok(js.includes("/ui-api"), "Authenticated bridge must ship");
 console.log(
   "Production bundle: mock implementation and protected API access absent.",
 );

@@ -784,3 +784,29 @@ footer,
     transition: none !important;
   }
 }
+/* Separate access code, not an account/registration interface. */
+.access-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.access-panel {
+  width: min(100%, 480px);
+  display: grid;
+  gap: 20px;
+  padding: 32px;
+}
+.access-panel h1 {
+  font-size: 1.8rem;
+}
+.access-panel input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #b7c9c1;
+  border-radius: 8px;
+  font: inherit;
+}
+.access-panel small {
+  color: #52685e;
+}

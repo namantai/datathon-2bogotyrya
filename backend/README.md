@@ -32,7 +32,7 @@ cp ../.env.example .env
 Замените `APP_API_KEY` в `.env` на локально сгенерированное случайное значение. Не используйте примерный ключ в production.
 
 ```bash
-uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8000
+uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8001 --no-proxy-headers
 ```
 
 Для запуска API текущего этапа оставьте `APP_ENVIRONMENT=development` и `APP_ANALYZER_MODE=fake`. Это режим проверки API, а не AI-анализ.
@@ -42,6 +42,9 @@ uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8000
 | Переменная | Назначение | Значение примера |
 |---|---|---|
 | `APP_API_KEY` | Секрет для `X-API-Key` | заменить локально |
+| `APP_UI_ACCESS_CODE` | отдельный код UI, 24–256 символов; без него bridge закрыт (`503`) | не задан |
+| `APP_UI_ALLOWED_ORIGINS` | JSON-массив точных Origin без завершающего `/`; production только HTTPS | `["http://localhost:5173"]` |
+| `APP_UI_SESSION_TTL_SEC` | абсолютный срок сессии, 60–3600 секунд, без продления polling | `1800` |
 | `APP_ANALYZER_MODE` | `disabled` или dev/test `fake` | `fake` |
 | `APP_STORAGE_DIR` | непубличное хранилище видео | `./storage` |
 | `APP_DATABASE_PATH` | SQLite состояния заданий | `./storage/jobs.sqlite3` |
@@ -72,7 +75,7 @@ ffmpeg -v error -f lavfi -i color=c=black:s=32x32:r=2 -t 1 -an -c:v mjpeg -f mov
 Загрузите его, используя значение ключа из локального `.env`:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/analyze \
+curl -X POST http://127.0.0.1:8001/api/v1/analyze \
   -H "X-API-Key: replace-with-your-local-secret" \
   -F "file=@/tmp/fortebank-synthetic.mov;type=video/quicktime"
 ```
@@ -80,7 +83,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/analyze \
 Ответ `202` содержит только `job_id`. Подставьте его в запрос состояния:
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/jobs/JOB_ID \
+curl http://127.0.0.1:8001/api/v1/jobs/JOB_ID \
   -H "X-API-Key: replace-with-your-local-secret"
 ```
 
@@ -117,3 +120,58 @@ python -m pytest
 ## Ограничения worker
 
 Реализован один in-process worker. Backend следует запускать одним Uvicorn-процессом без `--workers N`. Это не распределённая очередь: незавершённые задания после перезапуска не возобновляются, а безопасно финализируются как `failed`.
+
+## TASK 05A: Web UI bridge
+
+Внутренние маршруты: `POST /ui-api/session` (JSON `access_code`), `GET /ui-api/session`, `DELETE /ui-api/session`, `POST /ui-api/analyze` (multipart `file`) и `GET /ui-api/jobs/{job_id}`. Они исключены из OpenAPI жюри. Оба транспорта вызывают общий `analysis_service.py`, прежние SQLite и worker, без HTTP-запросов Backend к самому себе. Публичный JSON и авторизация жюри не изменены.
+
+Сессия возвращает только CSRF-token, фактический лимит файла и признак `fake` / `disabled` / `local`. Это отдельный внутренний протокол UI. Ключ жюри не используется bridge и не нужен Vite.
+
+### Запуск в Fish, терминал 1
+
+Из корня проекта после установки зависимостей:
+
+```fish
+cd backend
+source .venv/bin/activate.fish
+read --silent --prompt-str 'API key жюри: ' --export APP_API_KEY
+read --silent --prompt-str 'Отдельный код Web UI: ' --export APP_UI_ACCESS_CODE
+set -gx APP_ENVIRONMENT development
+set -gx APP_ANALYZER_MODE fake
+set -gx APP_UI_ALLOWED_ORIGINS '["http://localhost:5173"]'
+uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8001 --no-proxy-headers
+```
+
+Используйте два независимо сгенерированных случайных секрета, например из менеджера паролей. `read --silent` не отображает значение и не записывает его в shell history. Альтернатива — закрытый локальный `backend/.env` по корневому `.env.example`, не попадающий в Git. Пример кода UI закомментирован и как placeholder не принимается. Терминал 2 описан в [Frontend README](../frontend/README.md).
+
+### Защита и ограничения
+
+- Случайный 256-битный токен; сервер хранит его SHA-256 и сессию в памяти. Cookie: `HttpOnly; SameSite=Strict; Path=/ui-api`, без Domain; production добавляет `Secure`.
+- Все изменяющие UI-запросы требуют разрешённого Origin, включая login. Upload/logout дополнительно требуют `X-CSRF-Token`. Cross-site Fetch Metadata отклоняется, CORS не включён. Проверки выполняются до чтения тела.
+- Глобально 10 попыток входа в минуту (включая успешные), максимум 64 сессии. Лимитер не зависит от подделываемых forwarded headers. Недостаток простого общего лимита: злоумышленник может временно исчерпать его для остальных; при `429` повторить через минуту.
+- Глобально 6 попыток upload в минуту, 2 одновременных HTTP-upload, 1 незавершённое задание на сессию, 64 задания за срок сессии. Ошибочные авторизованные uploads тоже расходуют лимит. Прежний лимит очереди сохраняется.
+- Multipart-body: максимум `APP_MAX_UPLOAD_BYTES + 64 KiB` на служебные данные; файл — строго `APP_MAX_UPLOAD_BYTES`. Проверяется поток, не только Content-Length; приём тела — 60 секунд. Login-body — до 4 KiB. Частичные multipart-файлы закрываются при ошибках парсинга/лимита.
+- UI видит только задания своей сессии; её набор ID — метаданные доступа, не вторая очередь. Logout/expiry/restart закрывают UI-доступ к прежним результатам, но не отменяют worker. Refresh восстанавливает сессию, но не выбранный файл/историю. API жюри остаётся доступен только по ключу.
+- Bridge отвечает с `Cache-Control: no-store`, `nosniff` и безопасными ошибками. Не логировать cookies, коды, CSRF, тела запросов и кадры в приложении или reverse proxy.
+
+### Production — пока не развёрнуто
+
+Нужны HTTPS и один доверенный origin для статического `frontend/dist` и `/ui-api`, проксируемого в FastAPI без изменения Origin/cookies. Не кэшировать bridge; ограничить тела/соединения/таймауты на reverse proxy; не включать wildcard CORS. Backend напрямую в сеть не выставлять, использовать один worker. Vite dev server не является production-сервером.
+
+Настройки: `APP_ENVIRONMENT=production`, `APP_DEBUG=false`, независимые секреты, HTTPS в `APP_UI_ALLOWED_ORIGINS`. Без UI-кода bridge закрыт. FakeAnalyzer запрещён и конфигурацией, и проверкой внедрённого объекта. Пока модели нет, `disabled` даёт `failed`, а не ложный отрицательный вердикт. Реальный локальный адаптер — отдельный TASK 05B.
+
+MOV удаляются после обработки, но результаты/JPEG остаются в приватной SQLite по прежней реализации. Автоматического TTL результатов пока нет: до банковских данных/production необходимо согласовать срок хранения и очистку. Истечение сессии не удаляет БД. Этот этап проверяется только на синтетике.
+
+### Проверки интеграции
+
+```fish
+python -m pytest
+python -m compileall -q src tests
+python -m pip check
+# При свободных 8001 и 5173:
+env PYTHONPATH=src python -m tests.http_e2e
+# Если 5173 занят, тестовый порт и разрешённый Origin можно сменить вместе:
+env PYTHONPATH=src FORTE_HTTP_UI_PORT=5174 python -m tests.http_e2e
+```
+
+HTTP-тест требует установленных Frontend dependencies, Node, FFmpeg и разрешённых loopback-сокетов. Сам создаёт временные секреты/MOV, запускает Vite + FastAPI, проверяет login/cookie/CSRF, SQLite/worker, `processing → done`, несколько событий/JPEG, `failed`, повтор и logout, затем останавливает свои процессы. Это **HTTP E2E, не автоматизация браузера**. Реальный ML, пяти­минутный SLA на целевом железе и публичный deployment не проверены.

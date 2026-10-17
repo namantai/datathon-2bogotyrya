@@ -21,6 +21,8 @@ from fortebank_api.jobs import (
 from fortebank_api.schemas import HealthResponse
 from fortebank_api.storage import VideoStorage
 from fortebank_api.video_validation import FFprobeVideoValidator, VideoValidator
+from fortebank_api.ui_api import router as ui_router
+from fortebank_api.ui_security import UIBoundaryMiddleware, UISecurity
 
 
 class RequestTimingMiddleware:
@@ -64,6 +66,8 @@ def create_app(
         runtime_settings.ffprobe_path,
         runtime_settings.ffprobe_timeout_sec,
     )
+    if runtime_settings.environment == "production" and isinstance(selected_analyzer, FakeAnalyzer):
+        raise ValueError("FakeAnalyzer cannot run in production")
     selected_evidence_extractor = evidence_extractor or VideoEvidenceExtractor(
         ffmpeg_path=runtime_settings.ffmpeg_path,
         ffprobe_path=runtime_settings.ffprobe_path,
@@ -99,11 +103,19 @@ def create_app(
         lifespan=lifespan,
     )
     application.add_middleware(RequestTimingMiddleware)
+    security = UISecurity(runtime_settings)
+    application.add_middleware(UIBoundaryMiddleware, security=security)
+    application.state.ui_security = security
+    application.state.ui_analyzer_mode = (
+        "fake" if isinstance(selected_analyzer, FakeAnalyzer)
+        else "disabled" if isinstance(selected_analyzer, DisabledAnalyzer) else "local"
+    )
     application.state.settings = runtime_settings
     application.state.storage = storage
     application.state.video_validator = selected_validator
     application.state.job_manager = manager
     application.include_router(api_router)
+    application.include_router(ui_router)
 
     @application.get(
         "/health",

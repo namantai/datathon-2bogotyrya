@@ -1,17 +1,17 @@
 import { parseAccepted, parseJob, UiError } from "./contracts";
 import type { AnalysisService, DoneJob, Scenario } from "./contracts";
 
-// Current Backend default; the future bridge must publish its configured limit.
+// Mock default; authenticated bridge publishes the actual server limit.
 export const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
-export function validateFile(file: File): void {
+export function validateFile(file: File, limit = MAX_UPLOAD_BYTES): void {
   if (!/\.mov$/i.test(file.name))
     throw new UiError(
       "Выберите видео в формате .mov. Другие форматы не поддерживаются.",
     );
   if (!file.size) throw new UiError("Файл пуст. Выберите другую запись.");
-  if (file.size > MAX_UPLOAD_BYTES)
+  if (file.size > limit)
     throw new UiError(
-      "Файл превышает лимит 128 МиБ. Выберите запись меньшего размера.",
+      `Файл превышает лимит ${formatSize(limit)}. Выберите запись меньшего размера.`,
     );
 }
 export function formatSize(bytes: number): string {
@@ -62,7 +62,7 @@ export async function analyze(
   onAccepted: (jobId: string) => void,
   options = { pollMs: 1500, timeoutMs: 300_000 },
 ): Promise<DoneJob> {
-  validateFile(file);
+  validateFile(file, api.maxUploadBytes);
   const controller = new AbortController();
   const cancel = () => controller.abort(signal.reason);
   signal.throwIfAborted();

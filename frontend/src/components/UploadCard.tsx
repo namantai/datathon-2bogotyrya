@@ -1,12 +1,13 @@
 import { useRef, useState } from "react";
 import type { Scenario } from "../lib/contracts";
-import { formatSize } from "../lib/analysis";
+import { formatSize, MAX_UPLOAD_BYTES } from "../lib/analysis";
 import { Icon } from "./Icon";
 interface Props {
   file: File | null;
   busy: boolean;
   available: boolean;
   demo: boolean;
+  maxUploadBytes?: number;
   onSelect: (file: File | null, multiple?: boolean) => void;
   onStart: (scenario: Scenario) => void;
   onCancel: () => void;
@@ -16,6 +17,7 @@ export function UploadCard({
   busy,
   available,
   demo,
+  maxUploadBytes = MAX_UPLOAD_BYTES,
   onSelect,
   onStart,
   onCancel,
@@ -75,7 +77,7 @@ export function UploadCard({
             event.target.value = "";
           }}
         />
-        <small>.mov · до 128 МиБ</small>
+        <small>.mov · до {formatSize(maxUploadBytes)}</small>
       </div>
       {file && (
         <div className="selected-file">
@@ -132,7 +134,7 @@ export function UploadCard({
         <Icon name="shield" size={16} />
         {demo
           ? "В деморежиме файл остаётся в браузере."
-          : "Подключение к локальному сервису ожидается."}
+          : "Видео отправляется только на локальный Backend."}
       </p>
     </section>
   );
