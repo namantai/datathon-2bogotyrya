@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27,<2.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fortebank-datathon-api"
+version = "0.3.0"
+description = "Secure local Backend API for ForteBank DATATHON 2026"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.143,<1.0",
+    "pydantic-settings>=2.7,<3.0",
+    "python-multipart>=0.0.22,<1.0",
+    "uvicorn[standard]>=0.34,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fortebank_api"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+testpaths = ["tests"]

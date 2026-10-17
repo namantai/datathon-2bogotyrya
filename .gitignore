@@ -1,20 +1,72 @@
-
 # Python
 __pycache__/
 *.pyc
+*.py[cod]
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
 
 # Frontend
 node_modules/
 dist/
 build/
 .next/
+*.tsbuildinfo
 
 # Secrets
 .env
 .env.*
 !.env.example
+
+# Private datasets and local artifacts
+/private_data/
+private_data/
+data/
+datasets/
+extracted_frames/
+features/
+outputs/
+storage/
+artifacts/
+inference_results/
+tmp/
+temp/
+
+# Uploaded videos and generated media
+videos/
+uploads/
+frames/
+*.mov
+*.mp4
+*.avi
+*.mkv
+*.webm
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+
+# Model weights and local databases
+weights/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated arrays
+*.npy
+*.npz
 
 # IDE
 .vscode/
@@ -31,32 +83,5 @@ Thumbs.db
 wandb/
 mlruns/
 logs/
+*.log
 runs/
-
-# Private datasets
-private_data/
-data/
-datasets/
-extracted_frames/
-features/
-outputs/
-
-# Video files
-*.mov
-*.mp4
-*.avi
-
-# Model weights
-checkpoints/
-*.pt
-*.pth
-*.ckpt
-*.safetensors
-*.onnx
-
-# Generated arrays
-*.npy
-*.npz
-
-# Strictly local bank data
-/private_data/
