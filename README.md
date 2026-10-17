@@ -14,7 +14,7 @@ Two developers: ML and Fullstack.
 
 ## Project status
 
-Initial setup. На этапе 01 реализован только технический фундамент: диагностический Backend и стартовый Frontend. Анализ видео, API жюри и ML inference пока отсутствуют.
+Этап 02: реализован защищённый Backend API с локальной проверкой `.mov`, SQLite-заданиями и одним bounded worker. Настоящий ML inference и полноценный пользовательский интерфейс пока отсутствуют.
 
 ## Стек
 
@@ -40,11 +40,12 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
+cp ../.env.example .env
 uvicorn fortebank_api.main:app --app-dir src --reload
 ```
 
 Проверка: `GET http://127.0.0.1:8000/health`.
-Настройки по умолчанию безопасны; при необходимости файл окружения можно создать командой `cp ../.env.example .env` перед запуском из `backend/`.
+Подробные настройки и примеры API: [backend/README.md](backend/README.md).
 
 ## Локальный запуск Frontend
 
