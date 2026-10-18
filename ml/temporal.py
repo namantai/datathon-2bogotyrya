@@ -104,8 +104,14 @@ def score_windows(model: BinaryHead, x: np.ndarray, batch_size: int = 64) -> np.
     device = next(model.parameters()).device
     model.eval()
     with torch.inference_mode():
-        scores = np.concatenate([model(torch.from_numpy(x[i:i + batch_size]).to(device)).sigmoid().cpu().numpy()
-                                 for i in range(0, len(x), batch_size)])
+        batches = []
+        for i in range(0, len(x), batch_size):
+            logits = model(torch.from_numpy(x[i:i + batch_size]).to(device))
+            if not torch.isfinite(logits).all():
+                # sigmoid(-inf) is 0: checking probabilities alone hides a numerical failure.
+                raise ValueError("Nonfinite classifier logits")
+            batches.append(logits.sigmoid().cpu().numpy())
+        scores = np.concatenate(batches)
     if not np.isfinite(scores).all():
         raise ValueError("Nonfinite classifier scores")
     return scores
@@ -119,6 +125,19 @@ def smooth_scores(scores: np.ndarray, config: DetectionConfig) -> np.ndarray:
     radius = config.smooth_windows // 2
     return np.array([scores[max(0, i-radius):min(len(scores), i+radius+1)].mean()
                      for i in range(len(scores))])
+
+
+def score_diagnostics(scores: np.ndarray, bounds: np.ndarray, config: DetectionConfig) -> dict:
+    """Local-only trace, without changing scores, threshold or event selection."""
+    smoothed = smooth_scores(scores, config)
+    raw_positive, final_positive = scores >= config.threshold, smoothed >= config.threshold
+    return {"bounds_sec": bounds.tolist(), "raw_scores": scores.tolist(),
+            "smoothed_scores": smoothed.tolist(), "raw_positive_windows": int(raw_positive.sum()),
+            "smoothed_positive_windows": int(final_positive.sum()),
+            "suppressed_window_indices": np.flatnonzero(raw_positive & ~final_positive).tolist(),
+            "raw_video_positive": bool(raw_positive.any()),
+            "postprocessed_video_positive": bool(final_positive.any()),
+            "max_raw_score": float(scores.max()), "max_smoothed_score": float(smoothed.max())}
 
 
 def detect_events(scores: np.ndarray, bounds: np.ndarray, config: DetectionConfig) -> list[dict]:

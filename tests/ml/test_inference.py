@@ -88,3 +88,36 @@ def test_missing_checkpoint_fails_before_encoder(tmp_path, monkeypatch):
     monkeypatch.setattr(inference, "DinoV2Encoder", forbidden)
     with pytest.raises(FileNotFoundError):
         inference.VideoAnalyzer(tmp_path / "missing.pt", tmp_path / "model", private_root=tmp_path)
+
+
+def test_backend_predictions_match_standalone_and_write_no_jpegs(tmp_path, monkeypatch, make_video):
+    runner = analyzer(tmp_path, monkeypatch)
+    video = make_video()
+    predicted = runner.predict(str(video))
+    assert predicted and not list(runner.evidence_root.iterdir())
+    assert 0 <= predicted[0]["start_sec"] <= predicted[0]["timecode_sec"] <= predicted[0]["end_sec"]
+    assert "evidence_paths" not in predicted[0]
+    full = runner.analyze(str(video))
+    for key in ("type", "timecode_sec", "description", "confidence", "evidence_timestamps_sec"):
+        assert predicted[0][key] == full[0][key]
+
+
+def test_backend_input_root_separate_from_readonly_model_root(tmp_path, monkeypatch, make_video):
+    runner = analyzer(tmp_path, monkeypatch)
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    runner.input_root = storage
+    video = make_video("storage/source.mov")
+    assert runner.predict(str(video))
+    with pytest.raises(ValueError):
+        runner.predict(str(tmp_path / "outside-storage.mov"))
+
+
+def test_required_classifier_kind_checked_before_backbone_load(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "temporal.pt"
+    save_checkpoint(checkpoint, BinaryHead("temporal"), DetectionConfig(), {"completed": True, "synthetic_only": True})
+    def forbidden(*args, **kwargs):
+        pytest.fail("Must reject wrong head before loading backbone")
+    monkeypatch.setattr(inference, "DinoV2Encoder", forbidden)
+    with pytest.raises(ValueError, match="kind"):
+        inference.VideoAnalyzer(checkpoint, tmp_path / "model", private_root=tmp_path, required_kind="logistic")

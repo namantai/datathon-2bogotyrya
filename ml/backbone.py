@@ -93,6 +93,7 @@ class DinoV2Encoder:
                 raise
             self._fallback()
         self.weight_sha256 = provenance["sha256"]["model.safetensors"]
+        self.snapshot_sha256 = {name: provenance["sha256"][name] for name in MODEL_FILES}
 
     def _fallback(self) -> None:
         import torch
