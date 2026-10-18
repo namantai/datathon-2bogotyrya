@@ -1,6 +1,11 @@
 """Private same-origin browser transport, intentionally absent from jury OpenAPI."""
 
+from datetime import datetime, timezone
+import json
+import time
+
 from fastapi import APIRouter, HTTPException, Request, Response
+from starlette.responses import JSONResponse
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.formparsers import MultiPartException
@@ -58,7 +63,32 @@ async def analyze(request: Request) -> AnalyzeAccepted:
 
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)
-async def job(job_id: str, request: Request) -> JobResponse:
+async def job(job_id: str, request: Request, include_details: bool = False) -> JobResponse | Response:
     if job_id not in request.state.ui_session.jobs:
         raise HTTPException(404, "Job not found")
-    return read_job(job_id, request)
+    result = read_job(job_id, request)
+    if not include_details:
+        return result
+    record = request.app.state.job_manager.repository.get(job_id)
+    if record is None:
+        raise HTTPException(404, "Job not found")
+
+    def utc(value: float | None) -> str | None:
+        return datetime.fromtimestamp(value, timezone.utc).isoformat() if value is not None else None
+
+    now = time.time()
+    payload = result.model_dump(mode="json")
+    payload["timing"] = {
+        "server_time": utc(now), "request_started_at": utc(record.created_at),
+        "accepted_at": utc(record.queued_at), "processing_started_at": utc(record.started_at),
+        "deadline": utc(record.deadline_at), "completed_at": utc(record.completed_at),
+        "duration_sec": record.total_duration_sec,
+        "budget_scope": "backend_request_not_browser_click",
+    }
+    payload["failure_reason"] = (
+        "timeout" if record.error_code == "analysis_timeout"
+        else "processing_failed" if record.state == "failed" else None
+    )
+    payload["event_details"] = json.loads(record.ui_details_json or "[]")
+    # Explicit opt-in on the existing session-owned route; jury schemas remain unchanged.
+    return JSONResponse(payload)

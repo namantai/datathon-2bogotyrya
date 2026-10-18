@@ -1,8 +1,19 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { jpegSource, safeSourceUrl } from "../lib/contracts";
-import type { EvidenceFrame, ResultViewModel } from "../lib/contracts";
-import { formatTime } from "../lib/analysis";
+import type {
+  EvidenceFrame,
+  ResultViewModel,
+  Severity,
+} from "../lib/contracts";
+import { formatClock, formatTime } from "../lib/analysis";
 import { Icon } from "./Icon";
+const severityLabels: Record<Severity, string> = {
+  undetermined: "не определена",
+  low: "низкая",
+  medium: "средняя",
+  high: "высокая",
+  critical: "критическая",
+};
 function Frame({
   frame,
   demo,
@@ -37,17 +48,58 @@ function Frame({
 export function Results({
   model,
   demo,
+  testMode = demo,
+  file,
   onReset,
 }: {
   model: ResultViewModel;
   demo: boolean;
+  testMode?: boolean;
+  file?: File | null;
   onReset: () => void;
 }) {
   const positive = model.result.verdict === "violation";
+  const video = useRef<HTMLVideoElement>(null);
+  const pendingSeek = useRef<number | null>(null);
+  const [url, setUrl] = useState<string>();
+  const [playbackError, setPlaybackError] = useState(false);
+  useEffect(() => {
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    const player = video.current;
+    pendingSeek.current = null;
+    setUrl(objectUrl);
+    setPlaybackError(false);
+    return () => {
+      player?.pause();
+      player?.removeAttribute("src");
+      player?.load();
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
+  function seek(seconds: number) {
+    const player = video.current;
+    if (!player || playbackError) return;
+    if (player.readyState < 1) {
+      pendingSeek.current = seconds;
+      return;
+    }
+    try {
+      player.currentTime = Number.isFinite(player.duration)
+        ? Math.min(seconds, player.duration)
+        : seconds;
+      pendingSeek.current = null;
+      player.focus();
+    } catch {
+      setPlaybackError(true);
+    }
+  }
   return (
     <section className="results" aria-labelledby="results-title">
       <div className="results-top">
-        <p className="eyebrow">РЕЗУЛЬТАТ ПРОВЕРКИ</p>
+        <h1 id="results-title" tabIndex={-1}>
+          Анализ завершён
+        </h1>
         <button className="secondary" onClick={onReset}>
           Проверить другое видео
         </button>
@@ -65,10 +117,14 @@ export function Results({
           <Icon name={positive ? "shield" : "check"} size={26} />
         </span>
         <div>
-          <h2 id="results-title">
-            {positive
-              ? "Обнаружены признаки возможных нарушений"
-              : "Нарушение не обнаружено"}
+          <h2>
+            {testMode
+              ? positive
+                ? "Тестовый результат: найдены события"
+                : "Тестовый результат: событий нет"
+              : positive
+                ? "Обнаружены признаки возможных нарушений"
+                : "Нарушения не обнаружены"}
           </h2>
           <p>
             {positive
@@ -78,12 +134,51 @@ export function Results({
         </div>
       </div>
       <p className="result-note">
-        Результат помогает проверяющему и не является окончательным юридическим
-        выводом.
+        {testMode
+          ? "Тестовый вывод не оценивает содержание видео."
+          : "Результат требует проверки человеком и не является юридическим заключением."}
       </p>
+      {file && (
+        <section
+          className="panel video-card"
+          aria-label="Просмотр загруженного видео"
+        >
+          <div className="video-heading">
+            <Icon name="video" />
+            <span>{file.name}</span>
+          </div>
+          <video
+            ref={video}
+            src={url}
+            controls
+            muted
+            playsInline
+            preload="metadata"
+            tabIndex={0}
+            aria-label="Видеозапись проверки"
+            hidden={playbackError}
+            onError={() => setPlaybackError(true)}
+            onLoadedMetadata={() => {
+              if (pendingSeek.current !== null) seek(pendingSeek.current);
+            }}
+          />
+          {playbackError && (
+            <p className="player-fallback" role="status">
+              Браузер не поддерживает воспроизведение этого MOV. Просмотрите
+              кадры-доказательства ниже, если они есть в результате.
+            </p>
+          )}
+        </section>
+      )}
       {model.result.violations.map((event, index) => {
-        const source = model.sources?.[index],
-          sourceUrl = source && safeSourceUrl(source.url);
+        const detail = model.result.eventDetails?.[index];
+        const legacySource = model.sources?.[index];
+        const sources = (
+          detail?.sources ?? (legacySource ? [legacySource] : [])
+        ).filter(
+          (source) => source.verified === true && safeSourceUrl(source.url),
+        );
+        const severity = detail?.severity ?? "undetermined";
         return (
           <article
             className="panel event-card"
@@ -93,12 +188,25 @@ export function Results({
               <span className="event-index">
                 {String(index + 1).padStart(2, "0")}
               </span>
-              <h3>{event.type}</h3>
-              <span className="timecode">
+              <h3>{detail?.name ?? event.type}</h3>
+              <button
+                className="timecode"
+                disabled={!file || playbackError}
+                aria-label={`Перейти к событию ${index + 1}, ${formatClock(event.timecode_sec)}`}
+                onClick={() => seek(event.timecode_sec)}
+              >
                 <Icon name="clock" size={15} />
-                {formatTime(event.timecode_sec)}
-              </span>
+                {formatClock(event.timecode_sec)}
+              </button>
             </div>
+            <p className="severity">
+              Критичность: {severityLabels[severity]}{" "}
+              <span>
+                {severity === "undetermined"
+                  ? "· нет согласованной оценки риска"
+                  : "· предварительная оценка Backend, не юридический вывод"}
+              </span>
+            </p>
             <p className="observation">{event.description}</p>
             <div className="frame-grid">
               {event.evidence_frames.map((frame, i) => (
@@ -107,16 +215,19 @@ export function Results({
             </div>
             <div className="rule-source">
               <span>Нормативное основание</span>
-              {source && sourceUrl ? (
-                <a
-                  href={sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  referrerPolicy="no-referrer"
-                >
-                  {source.title}
-                  {source.section ? ` · ${source.section}` : ""} ↗
-                </a>
+              {sources.length ? (
+                sources.map((source, sourceIndex) => (
+                  <a
+                    key={sourceIndex}
+                    href={safeSourceUrl(source.url)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    referrerPolicy="no-referrer"
+                  >
+                    {source.title}
+                    {source.section ? ` · ${source.section}` : ""} ↗
+                  </a>
+                ))
               ) : (
                 <p>
                   Источник не предоставлен. Нормативное основание требует

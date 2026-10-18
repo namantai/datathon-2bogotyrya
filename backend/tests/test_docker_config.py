@@ -101,3 +101,25 @@ def test_image_defaults_and_build_context_policy():
     assert "client_max_body_size 129m;" in nginx
     assert "proxy_request_buffering off;" in nginx
     assert "try_files $uri $uri/ /index.html;" in nginx
+
+
+def test_optional_swagger_overlay_preserves_isolation(tmp_path):
+    if not (ROOT / "compose.swagger.yaml").exists() or shutil.which("docker") is None:
+        pytest.skip("Optional Swagger overlay or Docker CLI unavailable")
+    env_file = tmp_path / "synthetic.env"
+    env_file.write_text("APP_API_KEY=synthetic-compose-test-only\n")
+    result = subprocess.run(
+        ["docker", "compose", "--env-file", str(env_file), "-f", "compose.yaml",
+         "-f", "compose.local-fake.yaml", "-f", "compose.swagger.yaml", "config", "--format", "json"],
+        cwd=ROOT, env={**os.environ, "FORTE_ENV_FILE": str(env_file)},
+        capture_output=True, text=True, timeout=15, check=True,
+    )
+    config = json.loads(result.stdout)
+    backend = config["services"]["backend"]
+    assert config["networks"]["backend"]["internal"] is True
+    assert set(backend["networks"]) == {"backend"}
+    assert len(backend["ports"]) == 1
+    port = backend["ports"][0]
+    assert (port["host_ip"], str(port["published"]), port["target"]) == ("127.0.0.1", "8000", 8000)
+    assert backend["read_only"] and backend["cap_drop"] == ["ALL"]
+    assert "no-new-privileges:true" in backend["security_opt"]

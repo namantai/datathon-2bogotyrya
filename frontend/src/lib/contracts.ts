@@ -13,14 +13,26 @@ export interface DoneJob {
   status: "done";
   verdict: "violation" | "no_violation";
   violations: Violation[];
+  // Normalized private UI metadata, not part of the jury JSON contract.
+  eventDetails?: EventDetail[];
 }
-export type Job = { status: "processing" } | { status: "failed" } | DoneJob;
+export type Job =
+  | { status: "processing" }
+  | { status: "failed"; failureReason?: "timeout" }
+  | DoneJob;
 export type Scenario = "none" | "one" | "multiple" | "error";
 // A trusted future bridge supplies sources separately from the jury JSON.
 export interface RuleSource {
   title: string;
   url: string;
   section?: string;
+  verified?: boolean;
+}
+export type Severity = "undetermined" | "low" | "medium" | "high" | "critical";
+export interface EventDetail {
+  name: string;
+  severity: Severity;
+  sources: RuleSource[];
 }
 export interface ResultViewModel {
   result: DoneJob;
@@ -48,8 +60,11 @@ export function parseAccepted(v: unknown): string {
 }
 export function parseJob(v: unknown, jobId: string): Job {
   if (!object(v)) throw invalid();
-  if (v.status === "processing" || v.status === "failed")
-    return { status: v.status };
+  if (v.status === "processing") return { status: v.status };
+  if (v.status === "failed")
+    return v.failure_reason === "timeout"
+      ? { status: "failed", failureReason: "timeout" }
+      : { status: "failed" };
   if (
     v.status !== "done" ||
     v.job_id !== jobId ||
@@ -90,7 +105,64 @@ export function parseJob(v: unknown, jobId: string): Job {
       evidence_frames: frames,
     };
   });
-  return { status: "done", job_id: jobId, verdict: v.verdict, violations };
+  const result: DoneJob = {
+    status: "done",
+    job_id: jobId,
+    verdict: v.verdict,
+    violations,
+  };
+  if (
+    Array.isArray(v.event_details) &&
+    v.event_details.length === violations.length
+  ) {
+    result.eventDetails = v.event_details.map(
+      (detail: unknown, index): EventDetail => {
+        const fallback: EventDetail = {
+          name: violations[index].type,
+          severity: "undetermined",
+          sources: [],
+        };
+        if (!object(detail) || detail.event_code !== violations[index].type)
+          return fallback;
+        const severity =
+          typeof detail.severity === "string" &&
+          ["low", "medium", "high", "critical"].includes(detail.severity)
+            ? (detail.severity as Severity)
+            : "undetermined";
+        const sources: RuleSource[] = [];
+        if (Array.isArray(detail.regulatory_references)) {
+          for (const ref of detail.regulatory_references) {
+            if (!object(ref) || ref.status !== "candidate" || !object(ref.rule))
+              continue;
+            const rule = ref.rule;
+            if (
+              rule.review_status !== "verified" ||
+              !text(rule.document_title) ||
+              !text(rule.requirement_summary) ||
+              !text(rule.checked_at) ||
+              !text(rule.revision_version) ||
+              !text(rule.source_url)
+            )
+              continue;
+            const url = safeSourceUrl(rule.source_url);
+            if (url)
+              sources.push({
+                title: rule.document_title,
+                url,
+                verified: true,
+                ...(text(rule.provision) ? { section: rule.provision } : {}),
+              });
+          }
+        }
+        return {
+          name: text(detail.name) ? detail.name : fallback.name,
+          severity,
+          sources,
+        };
+      },
+    );
+  }
+  return result;
 }
 export function jpegSource(value: string): string | null {
   if (

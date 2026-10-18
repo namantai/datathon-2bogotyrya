@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     evidence_endpoint_scan_sec: float = 2.0
     max_queue_size: int = 8
     analysis_timeout_sec: float = 240.0
+    job_timeout_sec: float = 300.0
 
     @model_validator(mode="after")
     def validate_security_and_limits(self) -> "Settings":
@@ -82,8 +83,10 @@ class Settings(BaseSettings):
             raise ValueError("APP_EVIDENCE_ENDPOINT_SCAN_SEC must be positive")
         if self.max_queue_size <= 0:
             raise ValueError("APP_MAX_QUEUE_SIZE must be positive")
-        if self.analysis_timeout_sec <= 0:
-            raise ValueError("APP_ANALYSIS_TIMEOUT_SEC must be positive")
+        if not math.isfinite(self.analysis_timeout_sec) or self.analysis_timeout_sec <= 0:
+            raise ValueError("APP_ANALYSIS_TIMEOUT_SEC must be finite and positive")
+        if not math.isfinite(self.job_timeout_sec) or not 0 < self.job_timeout_sec <= 300:
+            raise ValueError("APP_JOB_TIMEOUT_SEC must be finite and within (0, 300]")
 
         raw_key = self.api_key.get_secret_value() if self.api_key is not None else ""
         if not 60 <= self.ui_session_ttl_sec <= 3600:

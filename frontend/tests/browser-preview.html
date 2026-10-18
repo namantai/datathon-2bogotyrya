@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ForteGuard — synthetic browser test only</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <aside style="padding: 16px; background: #fff2d8; text-align: center">
+      <p>Тестовая оснастка · не часть продукта · только синтетика</p>
+      <button id="synthetic" type="button">Подставить синтетический MOV</button>
+      <p id="fixture-status" role="status"></p>
+    </aside>
+    <script type="module">
+      import React from "react";
+      import { createRoot } from "react-dom/client";
+      import App from "../src/App.tsx";
+      import { createMockService } from "../src/services/mock.ts";
+      import "../src/styles.css";
+      if (!import.meta.env.DEV)
+        throw new Error("Development-only browser fixture");
+      createRoot(document.getElementById("root")).render(
+        React.createElement(
+          React.StrictMode,
+          null,
+          React.createElement(App, {
+            service:
+              new URLSearchParams(location.search).get("transport") === "bridge"
+                ? undefined
+                : createMockService(),
+          }),
+        ),
+      );
+      // Dedicated UI action, not a production hook. The fixture is generated locally.
+      document.getElementById("synthetic").onclick = async () => {
+        const input = document.querySelector('input[type="file"]');
+        if (!input) return;
+        const status = document.getElementById("fixture-status");
+        try {
+          const response = await fetch("./tmp/synthetic.mov");
+          if (
+            !response.ok ||
+            !(response.headers.get("content-type") || "").includes("video/")
+          )
+            throw new Error("Generate tests/tmp/synthetic.mov first");
+          const transfer = new DataTransfer();
+          transfer.items.add(
+            new File([await response.blob()], "synthetic.mov", {
+              type: "video/quicktime",
+            }),
+          );
+          input.files = transfer.files;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          status.textContent = "Синтетический файл выбран";
+        } catch {
+          status.textContent =
+            "Создайте tests/tmp/synthetic.mov по инструкции Frontend README";
+        }
+      };
+    </script>
+  </body>
+</html>

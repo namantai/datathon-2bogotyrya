@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from uuid import uuid4
 
@@ -26,6 +27,19 @@ async def submit_video(
     request: Request,
     file: UploadFile,
 ) -> AnalyzeAccepted:
+    started = request.scope["state"].get("request_started_perf", time.perf_counter())
+    remaining = request.app.state.settings.job_timeout_sec - (time.perf_counter() - started)
+    try:
+        if remaining <= 0:
+            await file.close()
+            raise TimeoutError
+        async with asyncio.timeout(max(0, remaining)):
+            return await _submit_video(request, file)
+    except TimeoutError:
+        raise HTTPException(408, "Server analysis deadline exceeded before acceptance") from None
+
+
+async def _submit_video(request: Request, file: UploadFile) -> AnalyzeAccepted:
     storage: VideoStorage = request.app.state.storage
     validator: VideoValidator = request.app.state.video_validator
     manager: JobManager = request.app.state.job_manager
@@ -63,6 +77,7 @@ async def submit_video(
             video_path=saved.path,
             created_at=created_at,
             upload_duration_sec=time.perf_counter() - request_started,
+            request_started_perf=request_started,
         )
     except (QueueCapacityError, WorkerUnavailableError) as exc:
         storage.delete(saved.path)

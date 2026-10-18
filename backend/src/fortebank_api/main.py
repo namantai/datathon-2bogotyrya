@@ -86,6 +86,7 @@ def create_app(
         evidence_extractor=selected_evidence_extractor,
         max_queue_size=runtime_settings.max_queue_size,
         analysis_timeout_sec=runtime_settings.analysis_timeout_sec,
+        job_timeout_sec=runtime_settings.job_timeout_sec,
         job_retention_sec=runtime_settings.job_retention_sec,
         cleanup_interval_sec=runtime_settings.cleanup_interval_sec,
     )
@@ -105,10 +106,11 @@ def create_app(
         description="Secure local video-analysis API with local evidence extraction.",
         lifespan=lifespan,
     )
-    application.add_middleware(RequestTimingMiddleware)
     security = UISecurity(runtime_settings)
     application.add_middleware(UIBoundaryMiddleware, security=security)
     application.add_middleware(JuryIngressMiddleware, settings=runtime_settings)
+    # Outermost: include authorization, multipart upload and validation, not just inference.
+    application.add_middleware(RequestTimingMiddleware)
     application.state.ui_security = security
     application.state.ui_analyzer_mode = (
         "fake" if isinstance(selected_analyzer, FakeAnalyzer)

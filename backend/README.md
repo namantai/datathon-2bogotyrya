@@ -6,6 +6,14 @@
 
 ## Системные требования
 
+Подготовлен опциональный `LocalProcessAnalyzer` для доверенного синхронного ML-модуля:
+inference выполняется в локальном дочернем процессе и прекращается при timeout.
+Модель/веса не добавлены, автоматического включения ML нет. Контракт и пример factory:
+[ML-интеграция](../docs/ml-contract.md). Дедлайн и правила:
+[серверный бюджет и Rule Engine](../docs/analysis-reliability.md).
+Frontend не изменялся; новые данные доступны опционально на
+`GET /ui-api/jobs/{job_id}?include_details=true` только владельцу сессии.
+
 - Python 3.11+;
 - `ffprobe` для проверки файлов и временной шкалы;
 - `ffmpeg` для локального извлечения evidence frames и генерации синтетических тестов.
@@ -55,6 +63,7 @@ uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8001 --no-p
 | `APP_CLEANUP_INTERVAL_SEC` | период очистки, до 100 старых результатов за проход | `300` |
 | `APP_MAX_QUEUE_SIZE` | число ожидающих заданий, без активного | `8` |
 | `APP_ANALYSIS_TIMEOUT_SEC` | общий timeout анализатора и evidence, без ожидания в очереди | `240` |
+| `APP_JOB_TIMEOUT_SEC` | бюджет от получения запроса Backend: загрузка, проверка, очередь, ML, кадры и правила; максимум 300 | `300` |
 | `APP_FFPROBE_PATH` | локальный executable FFprobe | `ffprobe` |
 | `APP_FFPROBE_TIMEOUT_SEC` | timeout проверки контейнера | `10` |
 | `APP_FFMPEG_PATH` | локальный executable FFmpeg | `ffmpeg` |

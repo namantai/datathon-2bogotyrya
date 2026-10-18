@@ -100,7 +100,9 @@ export function createBridgeService(
       });
     },
     getJob(jobId, signal) {
-      return call(`/jobs/${encodeURIComponent(jobId)}`, { signal });
+      return call(`/jobs/${encodeURIComponent(jobId)}?include_details=true`, {
+        signal,
+      });
     },
   };
 }

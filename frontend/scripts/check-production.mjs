@@ -8,6 +8,9 @@ const js = assets
   )
   .join("\n");
 for (const forbidden of [
+  "Тестовая оснастка",
+  "browser-preview",
+  "Development-only browser fixture",
   "СИНТЕТИЧЕСКИЙ ТЕСТ",
   "Не является кадром загруженного видео",
   "X-API-Key",

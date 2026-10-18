@@ -1,0 +1,37 @@
+{
+  "version": "2026-10-18-draft-1",
+  "events": [
+    {"event_code": "CASH_UNSECURED", "name": "Наличные вне предполагаемого места хранения", "description": "Кандидат для согласования; факт принятия наличных и назначение зоны необходимо установить отдельно.", "preliminary_risk": "undetermined", "applicability": ["Подтверждены контекст операции и назначение места хранения"], "definition_version": "draft-1", "review_status": "pending_review"},
+    {"event_code": "SAFE_LEFT_OPEN", "name": "Открытый сейф", "description": "Само по себе открытие сейфа не доказывает нарушение.", "preliminary_risk": "undetermined", "applicability": ["Нужны временной контекст, разрешённые операции и регламент банка"], "definition_version": "draft-1", "review_status": "pending_review"},
+    {"event_code": "CASHIER_LEFT_WORKPLACE", "name": "Отсутствие кассира на рабочем месте", "description": "Кандидат наблюдаемого события, не утверждённый класс модели.", "preliminary_risk": "undetermined", "applicability": ["Нужны полный временной контекст и регламент замещения"], "definition_version": "draft-1", "review_status": "pending_review"},
+    {"event_code": "DOOR_LEFT_OPEN", "name": "Открытая дверь", "description": "Требуется установить назначение двери и допустимость открытия.", "preliminary_risk": "undetermined", "applicability": ["Нужны схема помещений и внутренний регламент"], "definition_version": "draft-1", "review_status": "pending_review"},
+    {"event_code": "IDENTITY_CHECK_MISSING", "name": "Проверка документа не наблюдается", "description": "Не видно не означает не было; распознавание личности по лицу запрещено.", "preliminary_risk": "undetermined", "applicability": ["Нужны тип операции, полный контекст и подтверждение визуальной наблюдаемости"], "definition_version": "draft-1", "review_status": "pending_review"}
+  ],
+  "rules": [
+    {
+      "rule_id": "rk-nbrk-231-storage-candidate",
+      "document_title": "Правила осуществления кассовых операций и операций по инкассации банкнот, монет и ценностей в банках второго уровня, филиалах банков-нерезидентов Республики Казахстан, Национальном операторе почты и юридических лицах, исключительной деятельностью которых является инкассация банкнот, монет и ценностей",
+      "document_type": "state_regulation",
+      "document_number": "231",
+      "document_date": "2019-11-29",
+      "provision": null,
+      "candidate_provision": "20 (кандидат из задания, текст и актуальность не подтверждены)",
+      "source_url": "https://adilet.zan.kz/rus/docs/V1900019680",
+      "requirement_summary": null,
+      "revision_date": null,
+      "revision_version": null,
+      "checked_at": null,
+      "review_status": "pending_review",
+      "limitations": "2026-10-18: реквизиты найдены в индексе официального источника; полный актуальный текст недоступен через используемый доступ. Не применять как доказанную норму. Внутренние регламенты ForteBank не предоставлены."
+    }
+  ],
+  "mappings": [
+    {
+      "event_code": "CASH_UNSECURED",
+      "rule_id": "rk-nbrk-231-storage-candidate",
+      "required_conditions": {"cash_previously_accepted": true, "outside_approved_storage": true, "operation_in_scope": true},
+      "explanation": "Предварительная ссылка для проверки специалистом; правовой статус наличных и назначение зоны нельзя выводить только из их расположения в кадре.",
+      "review_status": "pending_review"
+    }
+  ]
+}

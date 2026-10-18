@@ -16,10 +16,12 @@ class AnalysisEvent:
     start_sec: float
     end_sec: float
     timecode_sec: float
-    confidence: float
+    confidence: float | None
     observation: str
-    rule_id: str
+    rule_id: str | None
     evidence_timestamps_sec: tuple[float, ...] = field(default_factory=tuple)
+    # Only established visual facts; absent is not equivalent to false.
+    conditions: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

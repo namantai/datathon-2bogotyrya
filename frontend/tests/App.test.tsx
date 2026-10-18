@@ -26,34 +26,40 @@ async function advance(ms: number) {
   });
 }
 
-it("renders initial screen, accepts keyboard upload and requests a file before submission", async () => {
+it("renders only upload, disables start without a valid file and accepts keyboard upload", async () => {
   render(<App service={api()} />);
   expect(screen.getByRole("heading", { level: 1 }).textContent).toContain(
-    "Каждое событие",
+    "Загрузите видеозапись",
   );
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Начать проверку" }));
-  expect(screen.getByRole("alert").textContent).toContain("Сначала выберите");
+  expect(
+    (screen.getByRole("button", { name: "Начать анализ" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Начать анализ" }));
+  expect(screen.queryByRole("alert")).toBeNull();
   await user.upload(screen.getByLabelText("MOV-видео"), file());
   expect(screen.getByText("sample.MOV")).toBeTruthy();
 });
 it("rejects invalid drop, multiple files and empty file", () => {
   const { container } = render(<App service={api()} />);
-  const zone = container.querySelector(".dropzone")!;
-  fireEvent.drop(zone, {
+  const zone = () => container.querySelector(".dropzone")!;
+  fireEvent.drop(zone(), {
     dataTransfer: {
       files: [new File(["x"], "bad.exe", { type: "video/quicktime" })],
     },
   });
   expect(screen.getByRole("alert").textContent).toContain("формате .mov");
-  fireEvent.drop(zone, { dataTransfer: { files: [file(), file()] } });
+  fireEvent.click(screen.getByRole("button", { name: "Попробовать снова" }));
+  fireEvent.drop(zone(), { dataTransfer: { files: [file(), file()] } });
   expect(screen.getByRole("alert").textContent).toContain("одну");
-  fireEvent.drop(zone, {
+  fireEvent.click(screen.getByRole("button", { name: "Попробовать снова" }));
+  fireEvent.drop(zone(), {
     dataTransfer: { files: [new File([], "empty.mov")] },
   });
   expect(screen.getByRole("alert").textContent).toContain("пуст");
 });
-it("shows uploading, processing, job ID and stops duplicate submission", async () => {
+it("shows one analysis screen across upload/polling and stops duplicate submission", async () => {
   vi.useFakeTimers();
   const service = api();
   let accept!: (value: unknown) => void;
@@ -65,22 +71,30 @@ it("shows uploading, processing, job ID and stops duplicate submission", async (
   );
   render(<App service={service} />);
   select();
-  const button = screen.getByRole("button", { name: "Начать проверку" });
+  const button = screen.getByRole("button", { name: "Начать анализ" });
   fireEvent.click(button);
   fireEvent.click(button);
   expect(service.submit).toHaveBeenCalledTimes(1);
-  expect(screen.getByText("Демонстрация загрузки…")).toBeTruthy();
+  expect(
+    screen.getByRole("heading", { name: "Идёт анализ видео..." }),
+  ).toBeTruthy();
+  expect(screen.queryByLabelText("MOV-видео")).toBeNull();
+  expect(screen.getAllByRole("progressbar")).toHaveLength(1);
   await act(async () => {
     accept({ job_id: "test-job" });
   });
-  expect(screen.getByText("Обработка записи…")).toBeTruthy();
-  expect(screen.getByText("test-job")).toBeTruthy();
+  expect(
+    screen.getByRole("heading", { name: "Идёт анализ видео..." }),
+  ).toBeTruthy();
+  expect(screen.getByRole("timer").textContent).toBe("00:00 / 05:00");
   await advance(1500);
   expect(
-    screen.getByRole("heading", { name: "Нарушение не обнаружено" }),
+    screen.getByRole("heading", { name: "Тестовый результат: событий нет" }),
   ).toBeTruthy();
   await advance(10_000);
   expect(service.getJob).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.queryByLabelText("MOV-видео")).toBeNull();
   fireEvent.click(
     screen.getByRole("button", { name: "Проверить другое видео" }),
   );
@@ -111,7 +125,7 @@ it.each(["none", "one", "multiple", "error"])(
     fireEvent.change(screen.getByLabelText("Демонстрационный сценарий"), {
       target: { value: scenario },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+    fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
     await advance(700);
     await advance(3000);
     if (scenario === "error")
@@ -120,7 +134,9 @@ it.each(["none", "one", "multiple", "error"])(
       );
     else if (scenario === "none")
       expect(
-        screen.getByRole("heading", { name: "Нарушение не обнаружено" }),
+        screen.getByRole("heading", {
+          name: "Тестовый результат: событий нет",
+        }),
       ).toBeTruthy();
     else {
       expect(screen.getAllByRole("article")).toHaveLength(
@@ -132,10 +148,10 @@ it.each(["none", "one", "multiple", "error"])(
       expect(screen.getAllByRole("img")[0].getAttribute("src")).toBe(
         `data:image/jpeg;base64,${JPEG}`,
       );
-      expect(
-        screen.getByText("00:12.4", { selector: ".timecode" }),
-      ).toBeTruthy();
+      expect(screen.getByText("00:12", { selector: ".timecode" })).toBeTruthy();
     }
+    // jsdom queues a zero-delay selectionchange event when the new heading receives focus.
+    await advance(0);
     expect(vi.getTimerCount()).toBe(0);
   },
 );
@@ -146,7 +162,7 @@ it.each([new Error("secret internal path"), new SyntaxError("bad JSON")])(
     vi.mocked(service.submit).mockRejectedValue(error);
     render(<App service={service} />);
     select();
-    fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+    fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Ошибка связи");
     expect(alert.textContent).not.toContain(error.message);
@@ -157,12 +173,12 @@ it("cancels and unmounts without further polling", async () => {
   const service = api();
   const view = render(<App service={service} />);
   select();
-  fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+  fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
   await advance(0);
   fireEvent.click(screen.getByRole("button", { name: "Отменить ожидание" }));
   await advance(5000);
   expect(service.getJob).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+  fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
   await advance(0);
   view.unmount();
   await advance(5000);
@@ -174,13 +190,8 @@ it("disables mock in production", async () => {
   expect(() => createMockService()).toThrow();
   expect(await loadService()).toBeNull();
   render(<App service={null} />);
-  expect(
-    (
-      screen.getByRole("button", {
-        name: "Начать проверку",
-      }) as HTMLButtonElement
-    ).disabled,
-  ).toBe(true);
+  expect(screen.queryByRole("button", { name: "Начать анализ" })).toBeNull();
+  expect(screen.getByRole("alert").textContent).toContain("недоступен");
   expect(screen.queryByLabelText("Демонстрационный сценарий")).toBeNull();
 });
 it("stops polling on pagehide and ignores late upload completion", async () => {
@@ -195,7 +206,7 @@ it("stops polling on pagehide and ignores late upload completion", async () => {
   );
   render(<App service={service} />);
   select();
-  fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+  fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
   fireEvent(window, new Event("pagehide"));
   await act(async () => {
     accept({ job_id: "test-job" });
@@ -210,7 +221,7 @@ it("fails safely when submit omits job_id", async () => {
   vi.mocked(service.submit).mockResolvedValue({});
   render(<App service={service} />);
   select();
-  fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+  fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
   expect((await screen.findByRole("alert")).textContent).toContain(
     "некорректный ответ",
   );
