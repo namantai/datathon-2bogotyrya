@@ -100,6 +100,7 @@ env PYTHONPATH=src python -m tests.benchmark
 - [Требования](docs/requirements.md)
 - [Контракт API жюри](docs/api-contract.md)
 - [DRAFT-контракт Backend ↔ ML](docs/ml-contract.md)
+- [Серверный дедлайн и нормативное сопоставление](docs/analysis-reliability.md)
 - [План HTTPS-развёртывания и передача ML](docs/deployment.md)
 - [Локальный Docker Compose: запуск и проверки D02](docs/docker-deployment.md)
 - [Аудит надёжности, измерения и ограничения TASK 06A](docs/readiness-report.md)
