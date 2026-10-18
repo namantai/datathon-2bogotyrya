@@ -1,0 +1,7 @@
+# Explicit LOCAL DEVELOPMENT ONLY; never include this file in production.
+# docker compose -f compose.yaml -f compose.local-fake.yaml up --build -d
+services:
+  backend:
+    environment:
+      APP_ENVIRONMENT: development
+      APP_ANALYZER_MODE: fake

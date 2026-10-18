@@ -35,6 +35,18 @@ docs/      архитектура, требования и контракты
 scripts/   будущие воспроизводимые служебные сценарии
 ```
 
+## Docker: один локальный адрес
+
+Подготовьте приватный `backend/.env` с `APP_API_KEY` (существующий файл не перезаписывать).
+Из корня проекта на Arch Linux: `sudo docker compose up --build -d --wait` →
+`http://localhost:8080`. Backend наружу не опубликован, SQLite хранится в named volume.
+Это **локальный HTTP development-стенд**, анализатор по умолчанию `disabled`.
+Для проверки на синтетике: `sudo docker compose -f compose.yaml -f compose.local-fake.yaml up --build -d --wait`.
+FakeAnalyzer не является AI-моделью и запрещён в production. Docker runtime-проверки
+пока требуют локального запуска с доступом к daemon: TASK D02 — PARTIAL.
+Инструкции Fish, smoke/restart, секреты, лицензии и MacBook:
+[docs/docker-deployment.md](docs/docker-deployment.md).
+
 ## Локальный запуск Backend (Fish, терминал 1)
 
 ```fish
@@ -89,6 +101,7 @@ env PYTHONPATH=src python -m tests.benchmark
 - [Контракт API жюри](docs/api-contract.md)
 - [DRAFT-контракт Backend ↔ ML](docs/ml-contract.md)
 - [План HTTPS-развёртывания и передача ML](docs/deployment.md)
+- [Локальный Docker Compose: запуск и проверки D02](docs/docker-deployment.md)
 - [Аудит надёжности, измерения и ограничения TASK 06A](docs/readiness-report.md)
 - [Рабочий процесс Codex](docs/codex-workflow.md)
 

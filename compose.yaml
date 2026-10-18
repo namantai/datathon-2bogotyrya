@@ -1,0 +1,75 @@
+name: forteguard
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    # Runtime only. Never pass this file/its values to either image build.
+    env_file:
+      - ${FORTE_ENV_FILE:-./backend/.env}
+    environment:
+      # This Compose is a loopback HTTP development stand, NOT production.
+      # Override host .env values so fake cannot be enabled implicitly.
+      APP_ENVIRONMENT: development
+      APP_DEBUG: "false"
+      APP_ANALYZER_MODE: disabled
+      APP_UI_ALLOWED_ORIGINS: '["http://localhost:8080","http://127.0.0.1:8080"]'
+      APP_STORAGE_DIR: /var/lib/forteguard/uploads
+      APP_DATABASE_PATH: /var/lib/forteguard/jobs.sqlite3
+      APP_MAX_UPLOAD_BYTES: "134217728"
+      APP_FFMPEG_PATH: /usr/bin/ffmpeg
+      APP_FFPROBE_PATH: /usr/bin/ffprobe
+    volumes:
+      - backend-data:/var/lib/forteguard
+    networks:
+      - backend
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - edge
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+networks:
+  edge: {}
+  backend:
+    internal: true
+
+volumes:
+  backend-data: {}
