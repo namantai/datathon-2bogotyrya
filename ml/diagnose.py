@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from ml.evaluate import binary_metrics
+from ml.evaluate import binary_metrics, localization_at_tolerance
 from ml.feature_data import VideoFeatures, dataset_fingerprint, load_features, split_videos, validate_split
 from ml.local_io import private_path, run_cli, write_json
 from ml.temporal import BinaryHead, DetectionConfig, detect_events, load_checkpoint, score_windows, smooth_scores, window_labels, windows
@@ -42,8 +42,14 @@ def score_video(model: BinaryHead, video: VideoFeatures, config: DetectionConfig
     video_score = float(smooth.max())
     prediction = int(video_score >= config.threshold)
     # This equivalence is critical: merging/localization must not change the verdict.
-    if prediction != int(bool(detect_events(raw, bounds, config))):
+    events = detect_events(raw, bounds, config)
+    if prediction != int(bool(events)):
         raise ValueError("Diagnostic decision differs from production detector")
+    detected_times = []
+    for event in events:
+        start, end = bounds[event["window_index"]]
+        eligible = video.times[(video.times >= start) & (video.times <= end)]
+        detected_times.append(float(eligible[np.abs(eligible-event["timecode_sec"]).argmin()]))
     counts = {name: int((targets == value).sum()) for name, value in
               (("positive", 1), ("negative", 0), ("ignored", -1))}
     mean, std = model.feature_mean.detach().cpu().numpy(), model.feature_std.detach().cpu().numpy()
@@ -67,6 +73,10 @@ def score_video(model: BinaryHead, video: VideoFeatures, config: DetectionConfig
            "bounds_sec": bounds.tolist(), "window_targets": targets.tolist(),
            "window_scores": raw.tolist(), "smoothed_window_scores": smooth.tolist(),
            "order_sensitivity": {}}
+    row.update(detections_sec=detected_times,
+               localization_at_3sec=localization_at_tolerance(video.points, detected_times, 3),
+               raw_positive_windows=int((raw >= config.threshold).sum()),
+               smoothing_suppressed_windows=int(((raw >= config.threshold) & (smooth < config.threshold)).sum()))
     if order_checks:
         rng = np.random.default_rng(seed)
         for name, order in (("reverse", np.arange(config.steps)[::-1]),
@@ -93,7 +103,15 @@ def partition_metrics(rows: list[dict], threshold: float) -> dict:
             if label >= 0:
                 supervised_labels.append(label)
                 supervised_predictions.append(int(score >= threshold))
+    matched = sum(r["localization_at_3sec"]["matched_events"] for r in rows)
+    extra = sum(r["localization_at_3sec"]["false_positive_events"] for r in rows)
+    missed = sum(r["localization_at_3sec"]["missed_reference_events"] for r in rows)
     return {"video_metrics": binary_metrics(labels, predictions),
+            "event_metrics_at_3sec": {"tolerance_sec": 3, "matched_events": matched,
+                "extra_events": extra, "missed_events": missed,
+                "precision": matched/(matched+extra) if matched+extra else 0,
+                "recall": matched/(matched+missed) if matched+missed else 0,
+                "f1": 2*matched/(2*matched+extra+missed) if 2*matched+extra+missed else 0},
             "supervised_window_metrics": binary_metrics(supervised_labels, supervised_predictions),
             "window_counts": {name: sum(r["window_counts"][name] for r in rows)
                               for name in ("positive", "negative", "ignored")},
@@ -357,7 +375,7 @@ def main() -> int:
     parser.add_argument("--private-root", default="private_data")
     parser.add_argument("--features", required=True)
     parser.add_argument("--logistic-checkpoint", required=True)
-    parser.add_argument("--temporal-checkpoint", required=True)
+    parser.add_argument("--temporal-checkpoint", help="Optional comparison; omitted for Logistic-only diagnosis")
     parser.add_argument("--output", required=True, help="New PRIVATE directory containing report.json")
     parser.add_argument("--cv-folds", type=int, default=0, help="0 disables training; >=2 explicitly enables nested group CV")
     parser.add_argument("--cv-epochs", type=int, default=20)
@@ -365,7 +383,8 @@ def main() -> int:
     args = parser.parse_args()
     output = private_path(args.output, args.private_root)
     features = private_path(args.features, args.private_root)
-    checkpoints = {name: private_path(getattr(args, name+"_checkpoint"), args.private_root) for name in ("logistic", "temporal")}
+    checkpoints = {name: private_path(getattr(args, name+"_checkpoint"), args.private_root)
+                   for name in ("logistic", "temporal") if getattr(args, name+"_checkpoint")}
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     try:
         report = diagnose(features, checkpoints, Path(args.private_root),

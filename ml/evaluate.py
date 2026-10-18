@@ -25,6 +25,9 @@ def binary_metrics(labels: list[int], predictions: list[int]) -> dict:
     return {"accuracy": (tp+tn)/len(y), "precision": precision, "recall": recall,
             "f1": 2*precision*recall/(precision+recall) if precision+recall else 0.0,
             "false_positives": fp, "false_negatives": fn,
+            "tp": tp, "tn": tn, "fp": fp, "fn": fn,
+            "false_positive_rate": fp/(fp+tn) if fp+tn else None,
+            "false_negative_rate": fn/(fn+tp) if fn+tp else None,
             "confusion_matrix": [[tn, fp], [fn, tp]], "confusion_order": "rows=true, columns=predicted; labels=[0,1]",
             "videos": len(y)}
 
@@ -40,6 +43,27 @@ def localization(points: list[float], detections: list[float]) -> dict:
             errors.append(error)
     return {"absolute_errors_sec": errors, "matched_events": len(errors),
             "unmatched_references": len(points)-len(errors), "unmatched_detections": len(detections)-len(errors)}
+
+
+def localization_at_tolerance(points: list[float], detections: list[float], tolerance_sec: float = 3) -> dict:
+    """Chronological one-to-one matching; maximum cardinality within inclusive ±tolerance."""
+    if (not np.isfinite(tolerance_sec) or tolerance_sec < 0
+            or any(not np.isfinite(t) or t < 0 for t in points + detections)):
+        raise ValueError("Invalid localization inputs")
+    references, predicted = sorted(points), sorted(detections)
+    i, j, errors = 0, 0, []
+    while i < len(references) and j < len(predicted):
+        if predicted[j] < references[i] - tolerance_sec:
+            j += 1
+        elif references[i] < predicted[j] - tolerance_sec:
+            i += 1
+        else:
+            errors.append(abs(references[i]-predicted[j]))
+            i, j = i+1, j+1
+    matched, fp, fn = len(errors), len(predicted)-len(errors), len(references)-len(errors)
+    return {"tolerance_sec": tolerance_sec, "matching": "chronological_one_to_one_maximum_cardinality",
+            "matched_events": matched, "false_positive_events": fp, "missed_reference_events": fn,
+            "absolute_errors_sec": errors}
 
 
 def main() -> None:

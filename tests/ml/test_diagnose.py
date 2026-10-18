@@ -59,18 +59,26 @@ def test_diagnostic_is_offline_read_only_and_does_not_train(tmp_path, diagnostic
     json.dumps(report, allow_nan=False)
 
 
-def test_diagnostic_cli_keeps_sensitive_results_local(tmp_path, diagnostic_inputs):
+@pytest.mark.parametrize("include_temporal", [False, True])
+def test_diagnostic_cli_keeps_sensitive_results_local(tmp_path, diagnostic_inputs, include_temporal):
     root, _, _, paths = diagnostic_inputs
     output = tmp_path / "local_report"
     command = [sys.executable, "-m", "ml.diagnose", "--private-root", str(tmp_path),
-        "--features", str(root), "--logistic-checkpoint", str(paths["logistic"]),
-        "--temporal-checkpoint", str(paths["temporal"]), "--output", str(output)]
+        "--features", str(root), "--logistic-checkpoint", str(paths["logistic"]), "--output", str(output)]
+    if include_temporal:
+        command.extend(["--temporal-checkpoint", str(paths["temporal"])])
     result = subprocess.run(command, capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "synthetic-" not in result.stdout + result.stderr
     report_path = output / "report.json"
     report_bytes = report_path.read_bytes()
-    assert json.loads(report_bytes)["status"] == "ok"
+    report = json.loads(report_bytes)
+    assert report["status"] == "ok"
+    assert set(report["models"]) == ({"logistic", "temporal"} if include_temporal else {"logistic"})
+    assert report["cross_validation"]["training_performed"] is False
+    for partition in report["models"]["logistic"]["partitions"].values():
+        assert set(("tp", "tn", "fp", "fn", "false_positive_rate", "false_negative_rate")) <= set(partition["video_metrics"])
+        assert partition["event_metrics_at_3sec"]["tolerance_sec"] == 3
     assert "synthetic-" in report_bytes.decode()
     repeated = subprocess.run(command, capture_output=True, text=True, timeout=60)
     assert repeated.returncode == 2 and report_path.read_bytes() == report_bytes

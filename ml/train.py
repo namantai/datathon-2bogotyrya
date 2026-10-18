@@ -15,11 +15,16 @@ from torch.nn import functional as F
 
 from ml.feature_data import VideoFeatures, dataset_fingerprint, load_features, split_videos, validate_split
 from ml.local_io import positive_float, private_path, run_cli, write_json
-from ml.temporal import BinaryHead, DetectionConfig, save_checkpoint, window_labels, windows
+from ml.temporal import BinaryHead, DetectionConfig, save_checkpoint, score_windows, window_labels, windows
 
 
 def training_arrays(videos: list[VideoFeatures], config: DetectionConfig, *,
-                    augment: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                    augment: bool = False, negative_reference: BinaryHead | None = None,
+                    hard_negative_factor: float = 3.0,
+                    hard_negative_fraction: float = .25) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if (not np.isfinite(hard_negative_factor) or hard_negative_factor < 1
+            or not np.isfinite(hard_negative_fraction) or not 0 < hard_negative_fraction <= 1):
+        raise ValueError("Invalid hard-negative weighting")
     xs, ys, ws = [], [], []
     class_counts = {label: sum(v.label == label for v in videos) for label in (0, 1)}
     if not all(class_counts.values()):
@@ -38,7 +43,18 @@ def training_arrays(videos: list[VideoFeatures], config: DetectionConfig, *,
         xs.append(x[selected])
         ys.append(labels[selected])
         # Equal total weight per class and per video within a class, not per duration.
-        ws.append(np.full(count, 1 / (class_counts[video.label] * count), dtype=np.float32))
+        if negative_reference is not None and video.label == 0:
+            # Opt-in experiment: scores are from a frozen baseline on TRAIN negatives
+            # only. No new labels and no validation-based mining. Preserve video and
+            # class weight mass; long videos must not gain extra influence.
+            scores = score_windows(negative_reference, x[selected])
+            hard_count = max(1, int(np.ceil(count * hard_negative_fraction)))
+            hard = np.argsort(-scores, kind="stable")[:hard_count]
+            importance = np.ones(count, dtype=np.float32)
+            importance[hard] = hard_negative_factor
+            ws.append(importance / importance.sum() / class_counts[video.label])
+        else:
+            ws.append(np.full(count, 1 / (class_counts[video.label] * count), dtype=np.float32))
     weights = np.concatenate(ws)
     weights /= weights.mean()
     return np.concatenate(xs), np.concatenate(ys).astype(np.float32), weights
@@ -47,7 +63,9 @@ def training_arrays(videos: list[VideoFeatures], config: DetectionConfig, *,
 def fit_head(train: list[VideoFeatures], validation: list[VideoFeatures], config: DetectionConfig,
              *, kind: str = "logistic", epochs: int = 60, batch_size: int = 32,
              learning_rate: float = .001, patience: int = 10, seed: int = 2026,
-             device: str = "cpu") -> tuple[BinaryHead, dict]:
+             device: str = "cpu", negative_reference: BinaryHead | None = None,
+             hard_negative_factor: float = 3.0,
+             hard_negative_fraction: float = .25) -> tuple[BinaryHead, dict]:
     if (epochs < 1 or batch_size < 1 or patience < 1 or not np.isfinite(learning_rate)
             or learning_rate <= 0 or device not in {"cpu", "auto", "mps"}):
         raise ValueError("Invalid training parameters")
@@ -55,6 +73,8 @@ def fit_head(train: list[VideoFeatures], validation: list[VideoFeatures], config
             or {v.digest for v in train} & {v.digest for v in validation}
             or {v.group for v in train} & {v.group for v in validation}):
         raise ValueError("Training/validation leakage")
+    if negative_reference is not None and (kind != "logistic" or negative_reference.kind != "logistic"):
+        raise ValueError("Hard-negative experiment requires logistic heads")
     for video in train + validation:
         if video.metadata["sample_fps"] != config.sample_fps:
             raise ValueError("Sampling rate differs from training configuration")
@@ -65,7 +85,8 @@ def fit_head(train: list[VideoFeatures], validation: list[VideoFeatures], config
     actual_device = "mps" if device != "cpu" and torch.backends.mps.is_available() else "cpu"
     if device == "mps" and actual_device == "cpu":
         warnings.warn("MPS unavailable; training on CPU", RuntimeWarning)
-    x, y, weights = training_arrays(train, config, augment=True)
+    x, y, weights = training_arrays(train, config, augment=True, negative_reference=negative_reference,
+        hard_negative_factor=hard_negative_factor, hard_negative_fraction=hard_negative_fraction)
     vx, vy, vw = training_arrays(validation, config)
     model = BinaryHead(kind)
     # Fit normalization only on training videos, giving each video equal influence.
@@ -128,6 +149,10 @@ def fit_head(train: list[VideoFeatures], validation: list[VideoFeatures], config
         "epochs_requested": epochs, "batch_size": batch_size, "learning_rate": learning_rate,
         "patience": patience, "torch_version": str(torch.__version__),
         "brightness_augmentation_train_videos": sum(v.brightness_embeddings is not None for v in train),
+        "negative_window_weighting": {"policy": "frozen_reference_train_only_top_fraction" if negative_reference is not None else "uniform",
+            "factor": hard_negative_factor if negative_reference is not None else 1.0,
+            "fraction": hard_negative_fraction if negative_reference is not None else None,
+            "per_video_and_class_mass_preserved": True},
         "supervision": "positive_point_windows_only; negative_video_windows; other_positive_windows_unknown"}
 
 
