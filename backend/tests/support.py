@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -61,16 +62,22 @@ async def request(
     }
     messages: list[dict[str, Any]] = []
     body_sent = False
+    response_complete = asyncio.Event()
 
     async def receive() -> dict[str, Any]:
         nonlocal body_sent
         if not body_sent:
             body_sent = True
             return {"type": "http.request", "body": body, "more_body": False}
+        # The client stays connected while FileResponse streams its body.
+        # Exhausting the request body is not an HTTP disconnect.
+        await response_complete.wait()
         return {"type": "http.disconnect"}
 
     async def send(message: dict[str, Any]) -> None:
         messages.append(message)
+        if message["type"] == "http.response.body" and not message.get("more_body", False):
+            response_complete.set()
 
     await app(scope, receive, send)
 

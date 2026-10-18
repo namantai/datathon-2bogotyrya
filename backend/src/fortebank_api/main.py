@@ -5,11 +5,15 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from fortebank_api.analyzers import Analyzer, DisabledAnalyzer, FakeAnalyzer
+from fortebank_api.analyzers import Analyzer, DisabledAnalyzer, FakeAnalyzer, create_analyzer
+from fortebank_api.ml_analyzer import LocalMLAnalyzer
 from fortebank_api.api import router as api_router
 from fortebank_api.config import Settings, get_settings
 from fortebank_api.evidence import VideoEvidenceExtractor
@@ -24,6 +28,9 @@ from fortebank_api.storage import VideoStorage
 from fortebank_api.video_validation import FFprobeVideoValidator, VideoValidator
 from fortebank_api.ui_api import router as ui_router
 from fortebank_api.ui_security import UIBoundaryMiddleware, UISecurity
+from fortebank_api.reviews import ReviewRepository, router as review_router
+from fortebank_api.rules import RuleEngine
+from fortebank_api.diagnostics_api import router as diagnostics_router
 
 
 class RequestTimingMiddleware:
@@ -56,13 +63,11 @@ def create_app(
         runtime_settings.upload_chunk_bytes,
     )
     repository = JobRepository(runtime_settings.database_path)
+    reviews = ReviewRepository(runtime_settings.database_path)
+    rules = RuleEngine()
     selected_analyzer = analyzer
     if selected_analyzer is None:
-        selected_analyzer = (
-            FakeAnalyzer()
-            if runtime_settings.analyzer_mode == "fake"
-            else DisabledAnalyzer()
-        )
+        selected_analyzer = create_analyzer(runtime_settings)
     selected_validator = video_validator or FFprobeVideoValidator(
         runtime_settings.ffprobe_path,
         runtime_settings.ffprobe_timeout_sec,
@@ -92,8 +97,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        if isinstance(selected_analyzer, LocalMLAnalyzer):
+            await selected_analyzer.initialize()
         await manager.start()
         try:
+            reviews.initialize()
             yield
         finally:
             await manager.stop()
@@ -103,6 +111,8 @@ def create_app(
         debug=runtime_settings.debug,
         version="0.3.0",
         description="Secure local video-analysis API with local evidence extraction.",
+        docs_url=None,
+        redoc_url=None,
         lifespan=lifespan,
     )
     application.add_middleware(RequestTimingMiddleware)
@@ -115,11 +125,25 @@ def create_app(
         else "disabled" if isinstance(selected_analyzer, DisabledAnalyzer) else "local"
     )
     application.state.settings = runtime_settings
+    application.state.rules = rules
+    application.state.reviews = reviews
     application.state.storage = storage
     application.state.video_validator = selected_validator
     application.state.job_manager = manager
     application.include_router(api_router)
     application.include_router(ui_router)
+    application.include_router(review_router)
+    application.include_router(diagnostics_router)
+    application.mount("/docs-assets", StaticFiles(directory=Path(__file__).parent / "static"), name="docs-assets")
+
+    @application.get("/docs", include_in_schema=False)
+    async def swagger_docs():
+        return get_swagger_ui_html(
+            openapi_url=application.openapi_url, title=application.title + " — API docs",
+            swagger_js_url="/docs-assets/swagger-ui-bundle.js",
+            swagger_css_url="/docs-assets/swagger-ui.css", swagger_favicon_url="data:,",
+            swagger_ui_parameters={"validatorUrl": None, "persistAuthorization": False},
+        )
 
     @application.get(
         "/health",

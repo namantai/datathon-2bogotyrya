@@ -226,6 +226,27 @@ def test_subprocess_timeout_is_controlled(tmp_path: Path, timed_color_mov: Path)
         asyncio.run(extractor.extract(timed_color_mov, (0.0,)))
 
 
+@pytest.mark.parametrize('cancelled', [False, True])
+def test_subprocess_exit_race_preserves_timeout_or_cancellation(monkeypatch, cancelled):
+    class ExitedProcess:
+        calls = 0
+        async def communicate(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise asyncio.CancelledError() if cancelled else TimeoutError()
+            return b'', b''
+        def kill(self):
+            raise ProcessLookupError('already exited')
+    process = ExitedProcess()
+    async def start(*args, **kwargs):
+        return process
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', start)
+    expected = asyncio.CancelledError if cancelled else EvidenceExtractionError
+    with pytest.raises(expected):
+        asyncio.run(make_extractor()._run(['synthetic-tool'], tool_name='FFmpeg'))
+    assert process.calls == 2
+
+
 @pytest.mark.parametrize("payload", [b"", b"not-jpeg", b"\xff\xd8broken\xff\xd9"])
 def test_invalid_jpeg_is_rejected(payload: bytes) -> None:
     with pytest.raises(EvidenceExtractionError):

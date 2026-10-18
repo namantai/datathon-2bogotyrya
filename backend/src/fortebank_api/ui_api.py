@@ -1,6 +1,7 @@
 """Private same-origin browser transport, intentionally absent from jury OpenAPI."""
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.formparsers import MultiPartException
@@ -58,7 +59,15 @@ async def analyze(request: Request) -> AnalyzeAccepted:
 
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)
-async def job(job_id: str, request: Request) -> JobResponse:
+async def job(job_id: str, request: Request, include_details: bool = False):
     if job_id not in request.state.ui_session.jobs:
         raise HTTPException(404, "Job not found")
-    return read_job(job_id, request)
+    result = read_job(job_id, request)
+    if include_details and result.status == "done":
+        body = result.model_dump(mode="json")
+        body["event_details"] = [
+            request.app.state.rules.assess(event.type, {}).model_dump(mode="json")
+            for event in result.violations
+        ]
+        return JSONResponse(body)
+    return result

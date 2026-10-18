@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import re
 from uuid import uuid4
@@ -32,6 +33,7 @@ class SavedUpload:
 
     path: Path
     size_bytes: int
+    sha256: str
 
 
 class VideoStorage:
@@ -66,6 +68,7 @@ class VideoStorage:
 
         target = self.root / f"{uuid4().hex}.mov"
         size = 0
+        digest = hashlib.sha256()
         try:
             with target.open("xb") as destination:
                 while chunk := await upload.read(self.chunk_bytes):
@@ -73,10 +76,11 @@ class VideoStorage:
                     if size > self.max_bytes:
                         raise UploadTooLargeError("Uploaded file exceeds the configured limit")
                     destination.write(chunk)
+                    digest.update(chunk)
 
             if size == 0:
                 raise EmptyUploadError("Uploaded file is empty")
-            return SavedUpload(path=target, size_bytes=size)
+            return SavedUpload(path=target, size_bytes=size, sha256=digest.hexdigest())
         except BaseException:
             target.unlink(missing_ok=True)
             raise

@@ -72,9 +72,11 @@ it.each(
     await tick();
     for (let i = 0; i < 20; i++) {
       view.rerender(tree());
-      fireEvent.change(screen.getByLabelText("MOV-видео"), {
-        target: { files: [file()] },
-      });
+      if (status === 200) {
+        fireEvent.change(screen.getByLabelText("MOV-видео"), {
+          target: { files: [file()] },
+        });
+      } else expect(screen.getByRole("alert")).toBeTruthy();
       await tick();
       expect(api.posts()).toBe(1);
     }
@@ -106,7 +108,7 @@ it("reopens and renews after expiry without polling sessions or replaying upload
   fireEvent.change(screen.getByLabelText("MOV-видео"), {
     target: { files: [file()] },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+  fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
   await tick();
   expect(screen.getByRole("alert").textContent).toContain("Сессия истекла");
   for (let i = 0; i < 60; i++) {
@@ -146,7 +148,7 @@ it("stops polling the old job after expiry even if anonymous recovery fails", as
   fireEvent.change(screen.getByLabelText("MOV-видео"), {
     target: { files: [file()] },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+  fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
   await tick(2000);
   expect(
     screen.getByRole("button", { name: "Повторить подключение" }),
@@ -156,7 +158,9 @@ it("stops polling the old job after expiry even if anonymous recovery fails", as
     expect(api.posts()).toBe(2);
     expect(api.gets()).toBe(0);
     expect(
-      api.requests.filter((r) => r.path === "/ui-api/jobs/old-job"),
+      api.requests.filter(
+        (r) => r.path === "/ui-api/jobs/old-job?include_details=true",
+      ),
     ).toHaveLength(1);
     expect(
       api.requests.filter((r) => r.path === "/ui-api/analyze"),
@@ -166,7 +170,7 @@ it("stops polling the old job after expiry even if anonymous recovery fails", as
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("times out bootstrap without retrying or hiding the dashboard", async () => {
+it("times out bootstrap into a separate error screen without retrying", async () => {
   vi.useFakeTimers();
   vi.stubEnv("VITE_UI_MODE", "bridge");
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -185,7 +189,8 @@ it("times out bootstrap without retrying or hiding the dashboard", async () => {
     </StrictMode>,
   );
   await tick(10001);
-  expect(screen.getByLabelText("MOV-видео")).toBeTruthy();
+  expect(screen.queryByLabelText("MOV-видео")).toBeNull();
+  expect(screen.getByRole("alert")).toBeTruthy();
   expect(
     screen.getByRole("button", { name: "Повторить подключение" }),
   ).toBeTruthy();

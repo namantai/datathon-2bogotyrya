@@ -3,6 +3,12 @@ import type { AnalysisService, DoneJob, Scenario } from "./contracts";
 
 // Mock default; authenticated bridge publishes the actual server limit.
 export const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
+export const ANALYSIS_TIMEOUT_MS = 300_000;
+// Compact event/timer label; retain the original fractional seconds for seeking.
+export function formatClock(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
+}
 export function validateFile(file: File, limit = MAX_UPLOAD_BYTES): void {
   if (!/\.mov$/i.test(file.name))
     throw new UiError(
@@ -60,38 +66,46 @@ export async function analyze(
   scenario: Scenario,
   signal: AbortSignal,
   onAccepted: (jobId: string) => void,
-  options = { pollMs: 1500, timeoutMs: 300_000 },
+  options = { pollMs: 1500, timeoutMs: ANALYSIS_TIMEOUT_MS },
 ): Promise<DoneJob> {
   validateFile(file, api.maxUploadBytes);
   const controller = new AbortController();
+  const deadline = performance.now() + options.timeoutMs;
+  const timeoutError = () =>
+    new UiError(
+      "Время ожидания истекло (5 минут). Результат не получен; серверная обработка могла продолжиться.",
+    );
   const cancel = () => controller.abort(signal.reason);
   signal.throwIfAborted();
   signal.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(
-    () =>
-      controller.abort(
-        new UiError(
-          "Время ожидания истекло (5 минут). Результат не получен; серверная обработка могла продолжиться.",
-        ),
-      ),
+    () => controller.abort(timeoutError()),
     options.timeoutMs,
   );
   const active = controller.signal;
+  const checkDeadline = () => {
+    active.throwIfAborted();
+    if (performance.now() >= deadline) throw timeoutError();
+  };
   try {
     const jobId = parseAccepted(
       await abortable(api.submit(file, active, scenario), active),
     );
-    active.throwIfAborted();
+    checkDeadline();
     onAccepted(jobId);
     while (true) {
       await pause(options.pollMs, active);
+      checkDeadline();
       const result = parseJob(
         await abortable(api.getJob(jobId, active), active),
         jobId,
       );
+      checkDeadline();
       if (result.status === "failed")
         throw new UiError(
-          "Не удалось завершить анализ. Попробуйте ещё раз или выберите другую запись.",
+          result.failureReason === "timeout"
+            ? "Превышен серверный лимит времени обработки. Результат не получен. Попробуйте другую запись."
+            : "Не удалось завершить анализ. Попробуйте ещё раз или выберите другую запись.",
         );
       if (result.status === "done") return result;
     }

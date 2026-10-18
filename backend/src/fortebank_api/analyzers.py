@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fortebank_api.config import Settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +21,7 @@ class AnalysisEvent:
     timecode_sec: float
     confidence: float
     observation: str
-    rule_id: str
+    rule_id: str | None
     evidence_timestamps_sec: tuple[float, ...] = field(default_factory=tuple)
 
 
@@ -27,6 +30,7 @@ class AnalysisResult:
     """Internal analyzer result; an empty tuple means no detected events."""
 
     events: tuple[AnalysisEvent, ...] = field(default_factory=tuple)
+    diagnostics: dict | None = None
 
 
 class Analyzer(Protocol):
@@ -46,6 +50,14 @@ class DisabledAnalyzer:
     async def analyze_video(self, local_video_path: Path) -> AnalysisResult:
         del local_video_path
         raise AnalyzerUnavailableError("A production analyzer is not configured")
+
+
+def create_analyzer(settings: Settings) -> Analyzer:
+    """Select explicitly; local mode never falls back to the development stub."""
+    if settings.analyzer_mode == "local":
+        from fortebank_api.ml_analyzer import LocalMLAnalyzer
+        return LocalMLAnalyzer(settings)
+    return FakeAnalyzer() if settings.analyzer_mode == "fake" else DisabledAnalyzer()
 
 
 class FakeAnalyzer:

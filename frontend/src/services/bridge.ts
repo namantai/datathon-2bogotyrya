@@ -12,6 +12,7 @@ const messages: Record<number, string> = {
   400: "Файл или запрос некорректен. Выберите исправный MOV.",
   403: "Проверка безопасности не пройдена. Обновите страницу.",
   404: "Задание не найдено или недоступно этой сессии.",
+  409: "Запись изменилась или анализ ещё не завершён. Обновите ручную проверку.",
   408: "Время загрузки истекло. Попробуйте ещё раз.",
   413: "Файл превышает допустимый размер.",
   415: "Неподдерживаемый формат. Выберите MOV.",
@@ -20,7 +21,8 @@ const messages: Record<number, string> = {
   503: "Сервис временно недоступен или не настроен. Обратитесь к оператору.",
 };
 
-async function http(path: string, init: RequestInit): Promise<unknown> {
+export async function http(path: string, init: RequestInit): Promise<unknown> {
+  const reviewRequest = path.includes("/reviews") || path === "/reviewer-session";
   let response: Response;
   try {
     response = await fetch(`/ui-api${path}`, {
@@ -41,7 +43,12 @@ async function http(path: string, init: RequestInit): Promise<unknown> {
     );
   if (!response.ok)
     throw new UiError(
-      messages[response.status] ??
+      (reviewRequest ? ({
+        400: "Некорректный запрос ручной проверки.",
+        403: "Доступ к ручной проверке отклонён. Проверьте код проверяющего и сессию.",
+        413: "Запись ручной проверки слишком длинная. Сократите текст.",
+        422: "Проверьте поля ручной записи, соответствие типа норме и обоснование критичности.",
+      } as Record<number, string>)[response.status] : undefined) ?? messages[response.status] ??
         "Сервер не смог выполнить запрос. Попробуйте позже.",
     );
   if (response.status === 204) return null;
@@ -100,7 +107,9 @@ export function createBridgeService(
       });
     },
     getJob(jobId, signal) {
-      return call(`/jobs/${encodeURIComponent(jobId)}`, { signal });
+      return call(`/jobs/${encodeURIComponent(jobId)}?include_details=true`, {
+        signal,
+      });
     },
   };
 }

@@ -24,8 +24,28 @@ import time
 import urllib.error
 import urllib.request
 
+_repo = Path(__file__).absolute().parents[2]
+
+
+def _privacy_guard(event, args):
+    if event in {"open", "os.listdir", "os.scandir"} and args and isinstance(args[0], (str, bytes, os.PathLike)):
+        path = Path(os.path.abspath(os.fsdecode(args[0])))
+        if path.is_relative_to(_repo / "private_data") or path.name.startswith(".env"):
+            raise PermissionError("SYNTHETIC_HTTP_PRIVATE_ACCESS_BLOCKED")
+
+
+sys.addaudithook(_privacy_guard)
+if os.environ.get("FORTE_HTTP_TEST") != "synthetic-only":
+    for _name in tuple(os.environ):
+        if _name.startswith(("APP_", "FORTEVISION_")):
+            os.environ.pop(_name)
+
 from fortebank_api.analyzers import AnalysisResult, FakeAnalyzer
 from fortebank_api.config import Settings
+Settings.model_config["env_file"] = None
+_bootstrap = tempfile.TemporaryDirectory(prefix="fortevision-http-import-")
+os.environ["APP_STORAGE_DIR"] = str(Path(_bootstrap.name) / "uploads")
+os.environ["APP_DATABASE_PATH"] = str(Path(_bootstrap.name) / "jobs.sqlite3")
 from fortebank_api.main import create_app
 from tests.support import multipart_file
 from tests.test_api import synthetic_event
@@ -90,8 +110,8 @@ def run():
         vite_env = {k: v for k, v in env.items() if not k.startswith("APP_")}
         logs = [root / "backend.log", root / "vite.log"]
         outputs = [resources.enter_context(path.open("wb")) for path in logs]
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-        foreign = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        foreign = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         def call(path, *, method="GET", data=None, headers=None, direct=False, visitor=None):
             url = (backend_origin if direct else origin) + path
             req = urllib.request.Request(url, data=data, method=method, headers=headers or {})

@@ -1,9 +1,6 @@
 import type { AnalysisService } from "../lib/contracts";
 export async function loadService(): Promise<AnalysisService | null> {
-  if (import.meta.env.DEV && import.meta.env.VITE_UI_MODE === "mock") {
-    const { createMockService } = await import("./mock");
-    return createMockService();
-  }
-  // null selects the anonymous same-origin bridge, including production.
+  // The application always uses the same-origin backend. Synthetic services
+  // remain explicit test dependencies, never an environment-triggered fallback.
   return null;
 }

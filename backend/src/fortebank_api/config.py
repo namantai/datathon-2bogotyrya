@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 import math
+import re
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -32,9 +33,16 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     debug: bool = False
     api_key: SecretStr | None = None
+    reviewer_tokens: dict[str, SecretStr] = {}
     ui_allowed_origins: list[str] = ["http://localhost:5173"]
     ui_session_ttl_sec: int = 1800
-    analyzer_mode: Literal["disabled", "fake"] = "disabled"
+    analyzer_mode: Literal["disabled", "fake", "local"] = "disabled"
+    diagnostics_enabled: bool = False
+    ml_private_root: Path = Path("private_data")
+    ml_checkpoint: Path = Path("private_data/checkpoints/logistic-v4/head.pt")
+    ml_model_dir: Path = Path("private_data/weights/dinov2-small")
+    ml_device: Literal["auto", "cpu", "mps"] = "auto"
+    ml_batch_size: int = 4
     storage_dir: Path = Path("./storage")
     database_path: Path = Path("./storage/jobs.sqlite3")
     max_upload_bytes: int = 128 * 1024 * 1024
@@ -84,8 +92,15 @@ class Settings(BaseSettings):
             raise ValueError("APP_MAX_QUEUE_SIZE must be positive")
         if self.analysis_timeout_sec <= 0:
             raise ValueError("APP_ANALYSIS_TIMEOUT_SEC must be positive")
+        if not math.isfinite(self.analysis_timeout_sec) or self.ml_batch_size < 1:
+            raise ValueError("ML batch size and analysis timeout must be finite and positive")
 
         raw_key = self.api_key.get_secret_value() if self.api_key is not None else ""
+        tokens = [token.get_secret_value() for token in self.reviewer_tokens.values()]
+        if (any(not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) for name in self.reviewer_tokens)
+                or any(len(token) < 32 or token != token.strip() or token == raw_key for token in tokens)
+                or len(set(tokens)) != len(tokens)):
+            raise ValueError("Reviewer credentials must be distinct strong secrets with stable reviewer IDs")
         if not 60 <= self.ui_session_ttl_sec <= 3600:
             raise ValueError("UI session lifetime must be 60–3600 seconds")
         if not self.ui_allowed_origins:

@@ -3,12 +3,17 @@
 import secrets
 from typing import Annotated
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader
+
+
+jury_api_key = APIKeyHeader(name="X-API-Key", scheme_name="JuryAPIKey", auto_error=False,
+                           description="Jury API key. Enter locally; never put it in a URL or frontend code.")
 
 
 async def require_api_key(
     request: Request,
-    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    x_api_key: Annotated[str | None, Security(jury_api_key)] = None,
 ) -> None:
     """Authenticate without logging or exposing the configured secret."""
 

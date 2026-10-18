@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AnalysisService } from "./lib/contracts";
 import { UiError } from "./lib/contracts";
 import { loadService } from "./services";
@@ -58,8 +58,31 @@ export default function App({ service }: { service?: AnalysisService | null }) {
       clearTimeout(timer);
     };
   }, [service, attempt]);
-  const analysis = useAnalysis(api),
-    demo = api?.mode === "demo";
+  const analysis = useAnalysis(api);
+  const demo = api?.mode === "demo";
+  const testMode = demo || api?.analyzerMode === "fake";
+  const unavailable = ready && !api;
+  const error =
+    connectionError ||
+    analysis.error ||
+    (unavailable
+      ? "Анализ пока недоступен. Подключение к Backend не настроено."
+      : "");
+  const screen = error
+    ? "error"
+    : analysis.busy
+      ? "analysis"
+      : analysis.result
+        ? "result"
+        : "upload";
+  const main = useRef<HTMLElement>(null);
+  useEffect(() => {
+    main.current?.querySelector<HTMLElement>("h1")?.focus();
+  }, [screen]);
+  function retry() {
+    analysis.selectFile(null);
+    if (connectionError || unavailable) setAttempt((value) => value + 1);
+  }
   return (
     <div className="app-shell">
       <a href="#main" className="skip-link">
@@ -67,126 +90,94 @@ export default function App({ service }: { service?: AnalysisService | null }) {
       </a>
       <header className="header">
         <a className="brand" href="/" aria-label="ForteGuard AI — главная">
-          <span className="brand-mark">
-            <Icon name="shield" size={26} />
-          </span>
-          <span>
+          <span className="bank-name">ForteBank</span>
+          <span className="brand-divider" aria-hidden="true" />
+          <span className="product-name">
             ForteGuard <em>AI</em>
           </span>
         </a>
-        <div className="header-meta">
-          <span className="project-tag">DATATHON 2026</span>
-          <span className={`mode-tag ${demo ? "demo" : ""}`}>
-            {demo
-              ? "Демонстрационный режим"
-              : api
-                ? "Локальный Backend"
-                : "Подключение не настроено"}
-          </span>
-        </div>
+        <span className="project-tag">DATATHON 2026</span>
       </header>
-      <main id="main" className="main">
-        <div className="page-intro">
-          <p className="eyebrow">ВИДЕОАНАЛИТИКА КАССОВЫХ ОПЕРАЦИЙ</p>
-          <h1>
-            Каждое событие —<br />
-            <span>в поле внимания.</span>
-          </h1>
-          <p className="lead">
-            Проверяйте записи, изучайте наблюдаемые действия
-            <br className="desktop-break" /> и принимайте решения на основе
-            кадров.
+      <main
+        id="main"
+        ref={main}
+        className={`main ${screen === "result" ? "main-results" : ""}`}
+        data-screen={screen}
+      >
+        {(testMode || api?.analyzerMode === "disabled") && (
+          <p className="mode-note" role="note">
+            <Icon name="shield" size={17} />
+            {demo
+              ? "Демо · синтетические события и кадры. Видео не анализируется."
+              : testMode
+                ? "Тестовый режим · FakeAnalyzer. Это не AI-анализ. Только синтетические видео."
+                : "ML-модель не подключена. Анализ завершится ошибкой, не вердиктом."}
           </p>
-        </div>
-        {demo ? (
-          <div className="demo-banner">
-            <span className="demo-label">ДЕМО</span>
-            <p>
-              Вы проверяете интерфейс на синтетических данных. Видео не
-              анализируется и не отправляется на сервер.
-            </p>
-          </div>
-        ) : (
-          <div className="demo-banner" role="status">
-            <Icon name="shield" />
-            <p>
-              {api?.mode === "bridge"
-                ? api.analyzerMode === "fake"
-                  ? "Тестовый Backend · FakeAnalyzer. Видео загружается на сервер, но AI-анализ не выполняется. Вердикт заглушки не оценивает содержание видео. Используйте только синтетику."
-                  : api.analyzerMode === "disabled"
-                    ? "Локальная ML-модель не подключена. Задание завершится контролируемой ошибкой, а не вердиктом."
-                    : "Видео обрабатывается локально. Результат требует проверки человеком."
-                : ready
-                  ? "Анализ пока недоступен. Ожидается безопасное серверное подключение; демонстрация отключена в production."
-                  : "Подключение к Backend…"}
-            </p>
-          </div>
         )}
-        {connectionError && (
-          <div className="error-banner" role="alert">
-            <p>{connectionError}</p>
-            <button
-              className="text-button"
-              disabled={!ready}
-              onClick={() => setAttempt((value) => value + 1)}
-            >
-              Повторить подключение
+        {screen === "error" ? (
+          <section className="panel error-card" aria-labelledby="error-title">
+            <span className="state-icon">
+              <Icon name="video" size={28} />
+            </span>
+            <h1 id="error-title" tabIndex={-1}>
+              Не удалось выполнить проверку
+            </h1>
+            <p className="lead" role="alert">
+              {error}
+            </p>
+            <button className="primary" onClick={retry} disabled={!ready}>
+              {connectionError || unavailable
+                ? "Повторить подключение"
+                : "Попробовать снова"}
             </button>
-          </div>
-        )}
-        {analysis.error && (
-          <div className="error-banner" role="alert">
-            <strong>Проверка не выполнена</strong>
-            <p>{analysis.error}</p>
-          </div>
-        )}
-        {analysis.notice && (
-          <p className="notice" role="status">
-            {analysis.notice}
-          </p>
-        )}
-        <div className="workspace">
-          <UploadCard
-            file={analysis.file}
-            busy={analysis.busy}
-            available={Boolean(api)}
-            demo={demo}
-            maxUploadBytes={api?.maxUploadBytes}
-            onSelect={analysis.selectFile}
-            onStart={analysis.start}
+            <p className="muted">
+              Повторная загрузка начнётся только после вашего подтверждения.
+            </p>
+          </section>
+        ) : screen === "analysis" ? (
+          <AnalysisStatus
+            startedAt={analysis.startedAt!}
             onCancel={analysis.cancel}
           />
-          <AnalysisStatus
-            phase={analysis.phase}
-            jobId={analysis.jobId}
-            demo={demo}
-          />
-        </div>
-        {analysis.result ? (
+        ) : screen === "result" && analysis.result ? (
           <Results
             model={{ result: analysis.result }}
             demo={demo}
+            testMode={testMode}
+            file={analysis.file}
             onReset={() => analysis.selectFile(null)}
           />
         ) : (
-          <section className="empty-result">
-            <span className="empty-icon">
-              <Icon name="video" size={27} />
-            </span>
-            <div>
-              <h2>Здесь появится результат</h2>
-              <p>
-                Вердикт, временные отметки и кадры по каждому обнаруженному
-                событию.
+          <>
+            {analysis.notice && (
+              <p className="notice" role="status">
+                {analysis.notice}
               </p>
-            </div>
-          </section>
+            )}
+            <UploadCard
+              file={analysis.file}
+              busy={analysis.busy}
+              available={Boolean(api)}
+              demo={demo}
+              maxUploadBytes={api?.maxUploadBytes}
+              onSelect={analysis.selectFile}
+              onStart={analysis.start}
+            />
+            {!ready && (
+              <p className="connection-note" role="status">
+                Подключение к Backend…
+              </p>
+            )}
+          </>
         )}
-        <footer>
-          <span>ForteGuard AI · Командный прототип</span>
-          <span>Визуальный анализ · Без идентификации лиц</span>
-        </footer>
       </main>
+      <footer className="footer">
+        <span>Командный прототип · Не официальный сервис банка</span>
+        <span>
+          <Icon name="shield" size={14} /> Локальная обработка · Без
+          идентификации лиц
+        </span>
+      </footer>
     </div>
   );
 }

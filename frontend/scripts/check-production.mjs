@@ -8,15 +8,17 @@ const js = assets
   )
   .join("\n");
 for (const forbidden of [
+  "Тестовая оснастка",
+  "browser-preview",
+  "Development-only browser fixture",
   "СИНТЕТИЧЕСКИЙ ТЕСТ",
   "Не является кадром загруженного видео",
   "X-API-Key",
   "APP_API_KEY",
   "APP_UI_ACCESS_CODE",
+  "APP_REVIEWER_TOKENS",
   "access_code",
   "Код доступа Web UI",
-  "Войти",
-  "Выйти",
   "127.0.0.1:8001",
   "/api/v1/analyze",
   "localStorage",

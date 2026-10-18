@@ -46,6 +46,7 @@ class EvidenceExtractionError(RuntimeError):
 class _VideoTimeline:
     duration_sec: float
     start_time_sec: float
+    seek_origin_sec: float = 0.0
 
 
 class VideoEvidenceExtractor:
@@ -140,12 +141,12 @@ class VideoEvidenceExtractor:
             stream = payload["streams"][0]
             format_data = payload.get("format", {})
             duration = self._first_finite_number(
-                format_data.get("duration"),
                 stream.get("duration"),
+                format_data.get("duration"),
             )
-            start_time = self._first_finite_number(
-                stream.get("start_time"),
+            seek_origin = self._first_finite_number(
                 format_data.get("start_time"),
+                stream.get("start_time"),
                 default=0.0,
             )
         except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -153,7 +154,19 @@ class VideoEvidenceExtractor:
 
         if duration <= 0:
             raise EvidenceExtractionError("Video duration must be positive")
-        return _VideoTimeline(duration_sec=duration, start_time_sec=start_time)
+        # ML zero is the first decoded/displayed video frame, which need not be
+        # the container/stream start. Inspect a bounded packet prefix only.
+        first, _ = await self._run([
+            self.ffprobe_path, "-protocol_whitelist", "file,pipe", "-format_whitelist", "mov",
+            "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#32",
+            "-show_entries", "frame=best_effort_timestamp_time", "-of", "json", str(path),
+        ], tool_name="FFprobe")
+        try:
+            first_frame = json.loads(first)["frames"][0]
+            start_time = self._first_finite_number(first_frame["best_effort_timestamp_time"])
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise EvidenceExtractionError("First decoded video timestamp is unavailable") from exc
+        return _VideoTimeline(duration_sec=duration, start_time_sec=start_time, seek_origin_sec=seek_origin)
 
     @staticmethod
     def _first_finite_number(*values: object, default: float | None = None) -> float:
@@ -230,7 +243,7 @@ class VideoEvidenceExtractor:
             "1",
             "-copyts",
             "-ss",
-            f"{seek_sec:.9f}",
+            f"{max(0.0, timeline.start_time_sec + seek_sec - timeline.seek_origin_sec):.9f}",
             "-protocol_whitelist", "file,pipe",
             "-format_whitelist", "mov",
             "-i",
@@ -287,7 +300,7 @@ class VideoEvidenceExtractor:
             "-select_streams",
             "v:0",
             "-read_intervals",
-            f"{scan_start:.9f}%{scan_end:.9f}",
+            f"{timeline.start_time_sec + scan_start:.9f}%{timeline.start_time_sec + scan_end:.9f}",
             "-show_entries",
             "frame=best_effort_timestamp_time",
             "-of",
@@ -331,11 +344,17 @@ class VideoEvidenceExtractor:
                 timeout=self.timeout_sec,
             )
         except TimeoutError as exc:
-            process.kill()
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass  # Process exited between timeout delivery and kill.
             await process.communicate()
             raise EvidenceExtractionError(f"{tool_name} timed out") from exc
         except asyncio.CancelledError:
-            process.kill()
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
             await process.communicate()
             raise
 

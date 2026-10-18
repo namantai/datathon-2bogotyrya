@@ -26,6 +26,7 @@ class Session:
     jobs: set[str] = field(default_factory=set)
     last_job: str | None = None
     uploading: bool = False
+    reviewer_id: str | None = None
 
 
 class UISecurity:
@@ -34,6 +35,7 @@ class UISecurity:
         self.sessions: dict[str, Session] = {}
         self.bootstraps: deque[float] = deque()
         self.uploads: deque[float] = deque()
+        self.review_logins: deque[float] = deque()
         self.active_uploads = 0
 
     @staticmethod

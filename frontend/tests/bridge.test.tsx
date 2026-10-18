@@ -45,7 +45,9 @@ it("sends only same-origin multipart file, session cookie and CSRF, never a jury
   expect((init?.body as FormData).get("file")).toBeInstanceOf(File);
   fetch.mockResolvedValue(response(done()));
   await service.getJob("a/b", signal);
-  expect(fetch.mock.lastCall?.[0]).toBe("/ui-api/jobs/a%2Fb");
+  expect(fetch.mock.lastCall?.[0]).toBe(
+    "/ui-api/jobs/a%2Fb?include_details=true",
+  );
 });
 
 it.each([400, 403, 404, 408, 413, 415, 422, 429, 500, 503])(
@@ -155,9 +157,7 @@ it("opens the dashboard immediately and bootstraps without credentials", async (
   expect(screen.getByLabelText("MOV-видео")).toBeTruthy();
   expect(screen.queryByLabelText("Код доступа Web UI")).toBeNull();
   expect(screen.queryByRole("button", { name: /Войти|Выйти/ })).toBeNull();
-  expect(
-    await screen.findByText(/Тестовый Backend · FakeAnalyzer/),
-  ).toBeTruthy();
+  expect(await screen.findByText(/Тестовый режим · FakeAnalyzer/)).toBeTruthy();
   expect(screen.queryByLabelText("Демонстрационный сценарий")).toBeNull();
   expect(fetch).toHaveBeenCalledOnce();
   expect(fetch.mock.calls[0][0]).toBe("/ui-api/session");
@@ -177,18 +177,18 @@ it.each([0, 2])(
       .mockResolvedValueOnce(response({ job_id: "test-job" }, 202))
       .mockResolvedValueOnce(response(done(count)));
     render(<App />);
-    await screen.findByText(/Тестовый Backend · FakeAnalyzer/);
+    await screen.findByText(/Тестовый режим · FakeAnalyzer/);
     fireEvent.change(screen.getByLabelText("MOV-видео"), {
       target: { files: [file()] },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+    fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
     await waitFor(
       () =>
         expect(
           screen.getByText(
             count
-              ? "Обнаружены признаки возможных нарушений"
-              : "Нарушение не обнаружено",
+              ? "Тестовый результат: найдены события"
+              : "Тестовый результат: событий нет",
           ),
         ).toBeTruthy(),
       { timeout: 3000 },
@@ -196,7 +196,7 @@ it.each([0, 2])(
     expect(fetch.mock.calls.map(([path]) => path)).toEqual([
       "/ui-api/session",
       "/ui-api/analyze",
-      "/ui-api/jobs/test-job",
+      "/ui-api/jobs/test-job?include_details=true",
     ]);
     expect(screen.queryByRole("button", { name: /Войти|Выйти/ })).toBeNull();
   },
@@ -209,11 +209,11 @@ it("restores an expired session once without automatically resubmitting the file
     .mockResolvedValueOnce(response({}, 401))
     .mockResolvedValueOnce(response(info));
   render(<App />);
-  await screen.findByText(/Тестовый Backend · FakeAnalyzer/);
+  await screen.findByText(/Тестовый режим · FakeAnalyzer/);
   fireEvent.change(screen.getByLabelText("MOV-видео"), {
     target: { files: [file()] },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Начать проверку" }));
+  fireEvent.click(screen.getByRole("button", { name: "Начать анализ" }));
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
     expect.stringContaining("Сессия истекла"),
@@ -227,18 +227,18 @@ it("restores an expired session once without automatically resubmitting the file
   expect(screen.queryByLabelText("Код доступа Web UI")).toBeNull();
 });
 
-it("keeps the dashboard on bootstrap failure and retries only on explicit action", async () => {
+it("shows a separate error on bootstrap failure and retries only on explicit action", async () => {
   vi.stubEnv("VITE_UI_MODE", "bridge");
   const fetch = fetchMock().mockResolvedValueOnce(response({}, 503));
   render(<App />);
   const retry = await screen.findByRole("button", {
     name: "Повторить подключение",
   });
-  expect(screen.getByLabelText("MOV-видео")).toBeTruthy();
+  expect(screen.queryByLabelText("MOV-видео")).toBeNull();
   expect(fetch).toHaveBeenCalledOnce();
   fetch.mockResolvedValueOnce(response(info));
   fireEvent.click(retry);
-  await screen.findByText(/Тестовый Backend · FakeAnalyzer/);
+  await screen.findByText(/Тестовый режим · FakeAnalyzer/);
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
@@ -260,12 +260,12 @@ it("ignores an unmounted bootstrap response", async () => {
   expect(screen.queryByLabelText("MOV-видео")).toBeNull();
 });
 
-it("requires explicit dev mock and ignores mock selection in production", async () => {
+it("always selects the backend bridge, even with stale dev mock environment", async () => {
   vi.stubEnv("DEV", true);
   vi.stubEnv("VITE_UI_MODE", "bridge");
   expect(await loadService()).toBeNull();
   vi.stubEnv("VITE_UI_MODE", "mock");
-  expect((await loadService())?.mode).toBe("demo");
+  expect(await loadService()).toBeNull();
   vi.stubEnv("DEV", false);
   expect(await loadService()).toBeNull();
 });

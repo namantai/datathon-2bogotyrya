@@ -10,7 +10,6 @@ interface Props {
   maxUploadBytes?: number;
   onSelect: (file: File | null, multiple?: boolean) => void;
   onStart: (scenario: Scenario) => void;
-  onCancel: () => void;
 }
 export function UploadCard({
   file,
@@ -20,7 +19,6 @@ export function UploadCard({
   maxUploadBytes = MAX_UPLOAD_BYTES,
   onSelect,
   onStart,
-  onCancel,
 }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -30,13 +28,11 @@ export function UploadCard({
   }
   return (
     <section className="panel upload-card" aria-labelledby="upload-title">
-      <div className="section-heading">
-        <span className="section-number">01</span>
-        <h2 id="upload-title">Видеозапись</h2>
-        <span className="format-tag">MOV</span>
-      </div>
-      <p className="muted">
-        Одна запись — одна проверка. Выберите файл с вашего устройства.
+      <h1 id="upload-title" tabIndex={-1}>
+        Загрузите видеозапись
+      </h1>
+      <p className="lead">
+        Выберите одну запись кассовой операции в формате MOV.
       </p>
       <div
         className={`dropzone ${dragging ? "dragging" : ""}`}
@@ -118,17 +114,12 @@ export function UploadCard({
       <div className="upload-actions">
         <button
           className="primary"
-          disabled={busy || !available}
+          disabled={busy || !available || !file}
           onClick={() => onStart(scenario)}
         >
-          {busy ? "Проверка выполняется" : "Начать проверку"}
+          Начать анализ
           <Icon name="arrow" size={18} />
         </button>
-        {busy && (
-          <button className="text-button" onClick={onCancel}>
-            Отменить ожидание
-          </button>
-        )}
       </div>
       <p className="privacy-note">
         <Icon name="shield" size={16} />

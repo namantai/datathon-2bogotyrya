@@ -6,6 +6,7 @@ import time
 from uuid import uuid4
 
 from fastapi import HTTPException, Request, UploadFile, status
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from fortebank_api.jobs import JobManager, QueueCapacityError, WorkerUnavailableError
 from fortebank_api.schemas import AnalyzeAccepted, JobResponse
@@ -26,6 +27,10 @@ async def submit_video(
     request: Request,
     file: UploadFile,
 ) -> AnalyzeAccepted:
+    form = await request.form()
+    uploads = [(name, value) for name, value in form.multi_items() if isinstance(value, StarletteUploadFile)]
+    if len(uploads) != 1 or uploads[0][0] != "file":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Exactly one MOV file is required")
     storage: VideoStorage = request.app.state.storage
     validator: VideoValidator = request.app.state.video_validator
     manager: JobManager = request.app.state.job_manager
@@ -61,6 +66,7 @@ async def submit_video(
         await manager.submit(
             job_id=job_id,
             video_path=saved.path,
+            upload_sha256=saved.sha256,
             created_at=created_at,
             upload_duration_sec=time.perf_counter() - request_started,
         )

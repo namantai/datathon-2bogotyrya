@@ -61,7 +61,7 @@ APP_FFPROBE_PATH=/usr/bin/ffprobe
 APP_FFMPEG_PATH=/usr/bin/ffmpeg
 ```
 
-Дополнительно обязателен `APP_API_KEY`. `APP_UI_ACCESS_CODE` удалён из настроек: входа Web UI больше нет. Заменить `jury.example.invalid` на фактический HTTPS-домен без `/` в конце. `APP_ANALYZER_MODE=disabled` сейчас только безопасно отклоняет анализ; после согласованной интеграции требуется настоящий adapter через factory, а не переключение на fake. Не изобретать `APP_ANALYZER_MODE=local`: такого enum сейчас нет.
+Дополнительно обязателен `APP_API_KEY`. `APP_UI_ACCESS_CODE` удалён из настроек: входа Web UI больше нет. Заменить `jury.example.invalid` на фактический HTTPS-домен без `/` в конце. `APP_ANALYZER_MODE=disabled` безопасно отклоняет анализ. Теперь реализован `APP_ANALYZER_MODE=local` с отдельными `APP_ML_*` настройками: см. [локальную ML-интеграцию](local-ml.md). Приведённый выше deployment-план намеренно оставляет `disabled`; не включайте обработку банковских материалов в облаке без подтверждённого разрешения. Пяти­минутный бюджет настоящего ML ещё нужно измерить.
 
 Шаблон `/etc/systemd/system/forteguard.service` (после создания пользователя, каталогов и установки зависимостей):
 

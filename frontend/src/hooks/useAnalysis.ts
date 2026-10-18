@@ -11,6 +11,7 @@ export function useAnalysis(api: AnalysisService | null) {
   const [notice, setNotice] = useState("");
   const [jobId, setJobId] = useState("");
   const [result, setResult] = useState<DoneJob | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const active = useRef<AbortController | null>(null);
   useEffect(() => {
     const leavePage = () => {
@@ -35,6 +36,7 @@ export function useAnalysis(api: AnalysisService | null) {
     setJobId("");
     setNotice("");
     setError("");
+    setStartedAt(null);
     try {
       if (multiple) throw new UiError("Выберите одну видеозапись за раз.");
       if (next) validateFile(next, api?.maxUploadBytes);
@@ -42,7 +44,7 @@ export function useAnalysis(api: AnalysisService | null) {
       setPhase(next ? "file_selected" : "idle");
     } catch (e) {
       setFile(null);
-      setPhase("idle");
+      setPhase("failed");
       setError((e as UiError).message);
     }
   }
@@ -58,6 +60,7 @@ export function useAnalysis(api: AnalysisService | null) {
     }
     const controller = new AbortController();
     active.current = controller;
+    setStartedAt(performance.now());
     setPhase("uploading");
     setError("");
     setNotice("");
@@ -106,6 +109,7 @@ export function useAnalysis(api: AnalysisService | null) {
     notice,
     jobId,
     result,
+    startedAt,
     selectFile,
     start,
     cancel,

@@ -2,7 +2,12 @@
 
 Локальный FastAPI Backend принимает `.mov`, проверяет контейнер через FFprobe, регистрирует задание в SQLite, обрабатывает bounded-очередь одним in-process worker и извлекает реальные JPEG-кадры через FFmpeg.
 
-Настоящий ML inference ещё не интегрирован. `FakeAnalyzer` доступен только для development/test и возвращает тестовое `no_violation`. Production-конфигурация с `FakeAnalyzer` отклоняется; при отключённом анализаторе задания переходят в `failed`.
+Режим `APP_ANALYZER_MODE=local` подключает существующий offline DINOv2 + сохранённую Logistic-голову.
+Настройка, запуск с Logistic v4 и независимая проверка — в [local-ml.md](../docs/local-ml.md).
+Локальный Swagger, безопасная CPU Docker-сборка через публичный TAR и синтетические
+проверки описаны в [container-local.md](../docs/container-local.md).
+`FakeAnalyzer` доступен только для development/test. Production-конфигурация с ним отклоняется;
+при отключённом анализаторе задания переходят в `failed`. Ошибка загрузки local-модели останавливает startup.
 
 ## Системные требования
 
@@ -44,7 +49,12 @@ uvicorn fortebank_api.main:app --app-dir src --host 127.0.0.1 --port 8001 --no-p
 | `APP_API_KEY` | Секрет для `X-API-Key` | заменить локально |
 | `APP_UI_ALLOWED_ORIGINS` | JSON-массив точных Origin без завершающего `/`; production только HTTPS | `["http://localhost:5173"]` |
 | `APP_UI_SESSION_TTL_SEC` | абсолютный срок сессии, 60–3600 секунд, без продления polling | `1800` |
-| `APP_ANALYZER_MODE` | `disabled` или dev/test `fake` | `fake` |
+| `APP_ANALYZER_MODE` | `disabled`, dev/test `fake`, offline `local` | `fake` в примере; default `disabled` |
+| `APP_ML_PRIVATE_ROOT` | граница локальных модельных артефактов | `private_data` |
+| `APP_ML_CHECKPOINT` | обученная Logistic-голова; путь относительно cwd | `private_data/checkpoints/logistic-v4/head.pt` |
+| `APP_ML_MODEL_DIR` | проверенный offline snapshot DINOv2 | `private_data/weights/dinov2-small` |
+| `APP_ML_DEVICE` | `auto`, `cpu`, `mps`; голова остаётся на CPU | `auto` |
+| `APP_ML_BATCH_SIZE` | backbone batch size | `4` |
 | `APP_STORAGE_DIR` | непубличное хранилище видео | `./storage` |
 | `APP_DATABASE_PATH` | SQLite состояния заданий | `./storage/jobs.sqlite3` |
 | `APP_MAX_UPLOAD_BYTES` | максимальный размер самого файла | 128 MiB |
