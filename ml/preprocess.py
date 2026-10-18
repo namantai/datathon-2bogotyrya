@@ -36,7 +36,8 @@ def probe_video(path: Path, timeout_sec: float = 30) -> dict:
         raise ValueError("Expected local MOV file")
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json", str(path.resolve())],
+            ["ffprobe", "-protocol_whitelist", "file,pipe", "-format_whitelist", "mov",
+             "-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json", str(path.resolve())],
             capture_output=True, timeout=timeout_sec, check=False,
         )
     except subprocess.TimeoutExpired:
@@ -76,7 +77,9 @@ def sample_video(path: Path, sample_fps: float = 2, timeout_sec: float = 240) ->
         raise ValueError("Sampling rate and deadline must be positive and finite")
     metadata = probe_video(path)
     began = time.monotonic()
-    container = av.open(str(path))
+    container = av.open(str(path), format="mov", options={
+        "protocol_whitelist": "file,pipe", "enable_drefs": "0", "use_absolute_path": "0",
+    })
     try:
         stream = container.streams.video[0]
         stream.thread_count = 1
